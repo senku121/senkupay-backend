@@ -34,6 +34,7 @@ exports.getWallet = async (req, res) => {
                 firstName: true,
 
                 lastName: true,
+                emailVerified: true,
 
                 balance: true,
 

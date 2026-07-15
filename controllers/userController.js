@@ -56,6 +56,7 @@ exports.getProfile = async (req, res) => {
                 phone: user.phone,
 
                 country: user.country,
+                emailVerified: user.emailVerified,
 
                 balance: user.balance,
 
