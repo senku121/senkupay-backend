@@ -1,0 +1,271 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * ==================================================
+ * ADMIN
+ * ==================================================
+ */
+
+model Admin {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  role      String   @default("SUPER_ADMIN")
+  status    String   @default("ACTIVE")
+  balance   Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  platformWithdraws PlatformWithdraw[]
+}
+
+/**
+ * ==================================================
+ * USER
+ * ==================================================
+ */
+
+model User {
+  id       String @id @default(cuid())
+  username String @unique
+  email    String @unique
+  password String
+
+  firstName String
+  lastName  String
+  phone     String?
+  country   String?
+
+  balance       Float @default(0)
+  deposited     Float @default(0)
+  withdrawn     Float @default(0)
+  lockedBalance Float @default(0)
+
+  status        String  @default("ACTIVE")
+  emailVerified Boolean @default(false)
+
+  otp       String?
+  otpExpiry DateTime?
+
+  resetOtp       String?
+  resetOtpExpiry DateTime?
+  resetVerified  Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  transactions     Transaction[]
+  deposits         Deposit[]
+  withdrawRequests WithdrawRequest[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+/**
+ * ==================================================
+ * AGENT
+ * ==================================================
+ */
+
+model Agent {
+  id       String  @id @default(cuid())
+  username String  @unique
+  email    String? @unique
+  password String
+  name     String
+  note     String?
+
+  balance Float  @default(0)
+  role    String @default("AGENT")
+  status  String @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  subAgents     SubAgent[]
+  agentRequests AgentRequest[]
+
+  @@index([role])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/**
+ * ==================================================
+ * SUB-AGENT
+ * ==================================================
+ */
+
+model SubAgent {
+  id            String  @id @default(cuid())
+  parentAgentId String
+  username      String  @unique
+  email         String? @unique
+  password      String
+  name          String
+  note          String?
+
+  balance Float  @default(0)
+  role    String @default("SUB_AGENT")
+  status  String @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  parentAgent   Agent          @relation(fields: [parentAgentId], references: [id], onDelete: Cascade)
+  agentRequests AgentRequest[]
+
+  @@index([parentAgentId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/**
+ * ==================================================
+ * AGENT REQUEST
+ * ==================================================
+ */
+
+model AgentRequest {
+  id String @id @default(cuid())
+
+  agentId    String?
+  subAgentId String?
+
+  type        String
+  amount      Float   @default(0)
+  description String?
+  note        String?
+  adminNote   String?
+
+  status String @default("PENDING")
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  processedAt DateTime?
+
+  agent    Agent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  subAgent SubAgent? @relation(fields: [subAgentId], references: [id], onDelete: SetNull)
+
+  @@index([agentId])
+  @@index([subAgentId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/**
+ * ==================================================
+ * TRANSACTION
+ * ==================================================
+ */
+
+model Transaction {
+  id     String @id @default(cuid())
+  userId String
+
+  type   String
+  amount Float
+  status String
+
+  reference String?
+  note      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/**
+ * ==================================================
+ * DEPOSIT
+ * ==================================================
+ */
+
+model Deposit {
+  id     String @id @default(cuid())
+  userId String
+
+  amount    Float
+  method    String
+  paymentId String?
+  status    String  @default("PENDING")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/**
+ * ==================================================
+ * WITHDRAW REQUEST
+ * ==================================================
+ */
+
+model WithdrawRequest {
+  id     String @id @default(cuid())
+  userId String
+
+  amount  Float
+  method  String
+  account String
+  note    String?
+
+  status String @default("Pending")
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  processedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/**
+ * ==================================================
+ * PLATFORM WITHDRAW
+ * ==================================================
+ */
+
+model PlatformWithdraw {
+  id      String  @id @default(cuid())
+  adminId String?
+
+  amount      Float
+  method      String
+  destination String
+  holder      String
+  note        String?
+
+  status String @default("Completed")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  admin Admin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([adminId])
+  @@index([status])
+  @@index([createdAt])
+}
