@@ -1,6 +1,6 @@
 /*==================================================
                 SENKU PAY
-        TRANSACTION ROUTES
+            SETTINGS ROUTES
 ==================================================*/
 
 const express = require("express");
@@ -8,29 +8,36 @@ const express = require("express");
 const router = express.Router();
 
 const {
-
     verifyToken
-
 } = require("../middleware/authMiddleware");
 
 const {
+    getSettings,
+    updateSettings,
+    changePassword
+} = require("../controllers/settingsController");
 
-    getTransactions
-
-} = require("../controllers/transactionsController");
 
 /*==================================
-        TRANSACTIONS
+        SETTINGS
 ==================================*/
 
 router.get(
-
     "/",
-
     verifyToken,
+    getSettings
+);
 
-    getTransactions
+router.put(
+    "/",
+    verifyToken,
+    updateSettings
+);
 
+router.post(
+    "/change-password",
+    verifyToken,
+    changePassword
 );
 
 module.exports = router;

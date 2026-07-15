@@ -52,6 +52,9 @@ const allowedOrigins = [
     "https://senku121.github.io"
 ];
 
+const settingsRoutes =
+require("./routes/settingsRoutes");
+
 const corsOptions = {
     origin(origin, callback) {
 
@@ -97,6 +100,10 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/wallet", walletRoutes);
+app.use(
+    "/api/settings",
+    settingsRoutes
+);
 app.use("/api/deposit", depositRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/withdraw", withdrawRoutes);
