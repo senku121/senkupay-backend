@@ -44,16 +44,53 @@ app.use(
 
     })
 );
-app.use(cors({
-    origin: [
-        "http://127.0.0.1:5500",
-        "http://localhost:5500",
-        "https://senkupay.onlinne",
-        "https://www.senkupay.online"
+const allowedOrigins = [
+    "http://127.0.0.1:5500",
+    "http://localhost:5500",
+    "https://senkupay.online",
+    "https://www.senkupay.online",
+    "https://senku121.github.io"
+];
+
+const corsOptions = {
+    origin(origin, callback) {
+
+        // Allows tools such as Postman and server-to-server requests
+        if (!origin) {
+            return callback(null, true);
+        }
+
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        console.error("Blocked by CORS:", origin);
+
+        return callback(
+            new Error("Origin is not allowed by CORS.")
+        );
+    },
+
+    methods: [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS"
     ],
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    credentials: true
-}));
+
+    allowedHeaders: [
+        "Content-Type",
+        "Authorization"
+    ],
+
+    credentials: true,
+
+    optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
 
 app.use(express.json());
 
