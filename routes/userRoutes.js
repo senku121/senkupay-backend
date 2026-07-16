@@ -15,7 +15,8 @@ const {
 
 const {
 
-    getProfile
+    getProfile,
+    deleteAccount
 
 } = require("../controllers/userController");
 
@@ -26,6 +27,16 @@ router.get(
     verifyToken,
 
     getProfile
+
+);
+
+router.delete(
+
+    "/account",
+
+    verifyToken,
+
+    deleteAccount
 
 );
 
