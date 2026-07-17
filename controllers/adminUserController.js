@@ -207,6 +207,10 @@ exports.addBalance = async (req, res) => {
         DEDUCT BALANCE
 ==================================*/
 
+/*================================
+        DEDUCT BALANCE
+================================*/
+
 exports.deductBalance = async (req, res) => {
 
     try {
@@ -215,23 +219,52 @@ exports.deductBalance = async (req, res) => {
 
         const amount = Number(req.body.amount);
 
-        if (amount <= 0) {
+
+        /*================================
+                VALIDATE AMOUNT
+        ================================*/
+
+        if (
+            !Number.isFinite(amount) ||
+            amount <= 0
+        ) {
 
             return res.status(400).json({
 
                 success: false,
 
-                message: "Invalid amount."
+                message: "Enter a valid amount."
 
             });
 
         }
 
-        const user = await prisma.user.findUnique({
 
-            where: { id }
+        /*================================
+              LOAD USER AND ADMIN
+        ================================*/
 
-        });
+        const [user, admin] =
+            await Promise.all([
+
+                prisma.user.findUnique({
+
+                    where: {
+                        id
+                    }
+
+                }),
+
+                prisma.admin.findFirst({
+
+                    where: {
+                        status: "ACTIVE"
+                    }
+
+                })
+
+            ]);
+
 
         if (!user) {
 
@@ -245,65 +278,180 @@ exports.deductBalance = async (req, res) => {
 
         }
 
+
+        if (!admin) {
+
+            return res.status(404).json({
+
+                success: false,
+
+                message: "Active admin account not found."
+
+            });
+
+        }
+
+
         if (Number(user.balance) < amount) {
 
             return res.status(400).json({
 
                 success: false,
 
-                message: "User has insufficient balance."
+                message: "User doesn't have enough balance."
 
             });
 
         }
 
-        const admin = await prisma.admin.findFirst();
 
-        await prisma.$transaction([
+        /*================================
+          DEDUCT USER + CREDIT PLATFORM
 
-            prisma.user.update({
+          Everything succeeds together,
+          or everything is rolled back.
+        ================================*/
 
-                where: { id },
+        const result =
+            await prisma.$transaction(async (tx) => {
 
-                data: {
+                /*
+                 * Conditional update prevents the
+                 * balance from becoming negative if
+                 * two requests happen simultaneously.
+                 */
 
-                    balance: {
+                const deduction =
+                    await tx.user.updateMany({
 
-                        decrement: amount
+                        where: {
 
-                    }
+                            id,
+
+                            balance: {
+                                gte: amount
+                            }
+
+                        },
+
+                        data: {
+
+                            balance: {
+                                decrement: amount
+                            }
+
+                        }
+
+                    });
+
+
+                if (deduction.count !== 1) {
+
+                    throw new Error(
+                        "INSUFFICIENT_USER_BALANCE"
+                    );
 
                 }
 
-            }),
 
-            prisma.admin.update({
+                const updatedAdmin =
+                    await tx.admin.update({
 
-                where: {
+                        where: {
+                            id: admin.id
+                        },
 
-                    id: admin.id
+                        data: {
 
-                },
+                            balance: {
+                                increment: amount
+                            }
 
-                data: {
+                        },
 
-                    balance: {
+                        select: {
 
-                        increment: amount
+                            id: true,
+                            balance: true
 
-                    }
+                        }
 
-                }
+                    });
 
-            })
 
-        ]);
+                const transaction =
+                    await tx.transaction.create({
+
+                        data: {
+
+                            userId: id,
+
+                            type: "Admin Deducted Balance",
+
+                            amount: -amount,
+
+                            status: "Completed",
+
+                            reference:
+                                `ADMIN-DEDUCT-${Date.now()}`,
+
+                            note:
+                                "Balance deducted by admin and returned to platform balance."
+
+                        }
+
+                    });
+
+
+                const updatedUser =
+                    await tx.user.findUnique({
+
+                        where: {
+                            id
+                        },
+
+                        select: {
+
+                            id: true,
+                            username: true,
+                            balance: true
+
+                        }
+
+                    });
+
+
+                return {
+
+                    user: updatedUser,
+
+                    admin: updatedAdmin,
+
+                    transaction
+
+                };
+
+            });
+
 
         return res.status(200).json({
 
             success: true,
 
-            message: "Balance deducted successfully."
+            message:
+                "Balance deducted and added to platform balance successfully.",
+
+            deductedAmount:
+                amount,
+
+            userBalance:
+                result.user.balance,
+
+            platformBalance:
+                result.admin.balance,
+
+            transactionId:
+                result.transaction.id
 
         });
 
@@ -311,13 +459,35 @@ exports.deductBalance = async (req, res) => {
 
     catch (error) {
 
-        console.error(error);
+        console.error(
+            "Admin deduct balance error:",
+            error
+        );
+
+
+        if (
+            error.message ===
+            "INSUFFICIENT_USER_BALANCE"
+        ) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "User doesn't have enough balance."
+
+            });
+
+        }
+
 
         return res.status(500).json({
 
             success: false,
 
-            message: "Unable to deduct balance."
+            message:
+                "Unable to deduct the user's balance."
 
         });
 
