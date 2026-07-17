@@ -6,6 +6,9 @@
 const express = require("express");
 
 const router = express.Router();
+const {
+    handleKycUpload
+} = require("../middleware/kycUploadMiddleware");
 
 const {
 
@@ -14,10 +17,10 @@ const {
 } = require("../middleware/authMiddleware");
 
 const {
-
     getProfile,
-    deleteAccount
-
+    deleteAccount,
+    getKycStatus,
+    submitKyc
 } = require("../controllers/userController");
 
 router.get(
@@ -38,6 +41,29 @@ router.delete(
 
     deleteAccount
 
+);
+
+
+/*==================================
+            KYC STATUS
+==================================*/
+
+router.get(
+    "/kyc/status",
+    verifyToken,
+    getKycStatus
+);
+
+
+/*==================================
+            SUBMIT KYC
+==================================*/
+
+router.post(
+    "/kyc/submit",
+    verifyToken,
+    handleKycUpload,
+    submitKyc
 );
 
 module.exports = router;

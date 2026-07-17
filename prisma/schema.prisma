@@ -9,6 +9,21 @@ datasource db {
 
 /**
  * ==================================================
+ * KYC STATUS
+ * ==================================================
+ */
+
+enum KycStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+  RESUBMISSION_REQUIRED
+  EXPIRED
+}
+
+/**
+ * ==================================================
  * ADMIN
  * ==================================================
  */
@@ -64,8 +79,44 @@ model User {
   transactions     Transaction[]
   deposits         Deposit[]
   withdrawRequests WithdrawRequest[]
+  kycVerification  KycVerification?
 
   @@index([status])
+  @@index([createdAt])
+}
+
+/**
+ * ==================================================
+ * KYC VERIFICATION (VERIFF)
+ * ==================================================
+ */
+
+model KycVerification {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  provider String    @default("VERIFF")
+  status   KycStatus @default(UNVERIFIED)
+
+  sessionId  String? @unique
+  sessionUrl String?
+  vendorData String?
+
+  decision       String?
+  decisionCode   String?
+  decisionReason String?
+
+  submittedAt   DateTime?
+  verifiedAt    DateTime?
+  lastWebhookAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([sessionId])
   @@index([createdAt])
 }
 
