@@ -12,7 +12,10 @@ const prisma = new PrismaClient();
 ==================================*/
 
 exports.getDashboard = async (req, res) => {
+    
     try {
+        const startOfToday = new Date();
+startOfToday.setHours(0, 0, 0, 0);
         const [
             totalUsers,
             totalAgents,
@@ -60,14 +63,17 @@ exports.getDashboard = async (req, res) => {
 
             // Completed deposits
             prisma.transaction.aggregate({
-                _sum: {
-                    amount: true
-                },
-                where: {
-                    type: "Deposit",
-                    status: "Completed"
-                }
-            }),
+    _sum: {
+        amount: true
+    },
+    where: {
+        type: "Deposit",
+        status: "Completed",
+        createdAt: {
+            gte: startOfToday
+        }
+    }
+}),
 
             // Completed withdrawals
             prisma.transaction.aggregate({
