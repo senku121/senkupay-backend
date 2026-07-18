@@ -14,12 +14,34 @@ datasource db {
  */
 
 enum KycStatus {
-  UNVERIFIED
+  NOT_SUBMITTED
   PENDING
   VERIFIED
   REJECTED
-  RESUBMISSION_REQUIRED
-  EXPIRED
+  REVERIFY_REQUIRED
+}
+
+enum KycVerificationSource {
+  USER_UPLOAD
+  OFFLINE_ADMIN
+}
+
+enum KycDocumentType {
+  ID_FRONT
+  ID_BACK
+  PASSPORT
+  SELFIE
+  PROOF_OF_ADDRESS
+  OTHER
+}
+
+enum KycActionType {
+  SUBMITTED
+  VERIFIED
+  REJECTED
+  REVOKED
+  REVERIFY_REQUIRED
+  RESUBMITTED
 }
 
 /**
@@ -39,6 +61,9 @@ model Admin {
   updatedAt DateTime @default(now()) @updatedAt
 
   platformWithdraws PlatformWithdraw[]
+
+  verifiedKycRecords KycVerification[] @relation("KycVerifiedByAdmin")
+  kycActions         KycAuditLog[]     @relation("KycActionAdmin")
 }
 
 /**
@@ -79,7 +104,10 @@ model User {
   transactions     Transaction[]
   deposits         Deposit[]
   withdrawRequests WithdrawRequest[]
-  kycVerification  KycVerification?
+
+  kycVerification KycVerification?
+  kycDocuments    KycDocument[]
+  kycAuditLogs    KycAuditLog[]
 
   @@index([status])
   @@index([createdAt])
@@ -87,7 +115,7 @@ model User {
 
 /**
  * ==================================================
- * KYC VERIFICATION (VERIFF)
+ * KYC VERIFICATION
  * ==================================================
  */
 
@@ -95,28 +123,93 @@ model KycVerification {
   id     String @id @default(cuid())
   userId String @unique
 
-  provider String    @default("VERIFF")
-  status   KycStatus @default(UNVERIFIED)
+  status KycStatus              @default(NOT_SUBMITTED)
+  source KycVerificationSource?
 
-  sessionId  String? @unique
-  sessionUrl String?
-  vendorData String?
+  documentType    String?
+  documentCountry String?
 
-  decision       String?
-  decisionCode   String?
-  decisionReason String?
+  submittedAt DateTime?
+  reviewedAt  DateTime?
+  verifiedAt  DateTime?
+  rejectedAt  DateTime?
+  revokedAt   DateTime?
 
-  submittedAt   DateTime?
-  verifiedAt    DateTime?
-  lastWebhookAt DateTime?
+  rejectionReason      String?
+  reverificationReason String?
+  adminNote            String?
+
+  verifiedByAdminId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verifiedByAdmin Admin? @relation("KycVerifiedByAdmin", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+
+  documents KycDocument[]
+  auditLogs KycAuditLog[]
 
   @@index([status])
-  @@index([sessionId])
+  @@index([source])
+  @@index([verifiedByAdminId])
+  @@index([createdAt])
+}
+
+model KycDocument {
+  id String @id @default(cuid())
+
+  userId            String
+  kycVerificationId String
+
+  type KycDocumentType
+
+  fileName String
+  fileUrl  String
+
+  cloudinaryPublicId     String
+  cloudinaryResourceType String @default("image")
+
+  mimeType String?
+  fileSize Int?
+
+  uploadedAt DateTime  @default(now())
+  deletedAt  DateTime?
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kycVerification KycVerification @relation(fields: [kycVerificationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([kycVerificationId])
+  @@index([type])
+  @@index([uploadedAt])
+}
+
+model KycAuditLog {
+  id String @id @default(cuid())
+
+  userId            String
+  kycVerificationId String
+  adminId           String?
+
+  action KycActionType
+
+  previousStatus KycStatus?
+  newStatus      KycStatus
+
+  reason String?
+  note   String?
+
+  createdAt DateTime @default(now())
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kycVerification KycVerification @relation(fields: [kycVerificationId], references: [id], onDelete: Cascade)
+  admin           Admin?          @relation("KycActionAdmin", fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([kycVerificationId])
+  @@index([adminId])
+  @@index([action])
   @@index([createdAt])
 }
 
