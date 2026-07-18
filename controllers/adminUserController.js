@@ -720,8 +720,7 @@ exports.getUserKyc = async (req, res) => {
 
                                     select: {
                                         id: true,
-                                        username: true,
-                                        email: true
+                                        username: true
                                     }
 
                                 }
