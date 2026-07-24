@@ -12,116 +12,268 @@ const {
                     CONSTANTS
 ==================================================*/
 
-const SUPPORTED_CURRENCIES = new Set([
-    "USD",
-    "NGN",
-    "CAD",
-    "GBP",
-    "EUR"
+const SUPPORTED_CURRENCIES =
+new Set([
+    "USD"
 ]);
+
+const PAYMENT_METHODS =
+Object.freeze({
+
+    card: {
+        code:
+            "CARD",
+        label:
+            "Card",
+        providerOption:
+            "card"
+    },
+
+    cashapp: {
+        code:
+            "CASH_APP",
+        label:
+            "Cash App",
+        providerOption:
+            "cashapp"
+    },
+
+    applepay: {
+        code:
+            "APPLE_PAY",
+        label:
+            "Apple Pay",
+        providerOption:
+            "apple_pay"
+    },
+
+    googlepay: {
+        code:
+            "GOOGLE_PAY",
+        label:
+            "Google Pay",
+        providerOption:
+            "google_pay"
+    }
+
+});
 
 
 /*==================================================
                     HELPERS
 ==================================================*/
 
-function requiredString(value, fieldName) {
+function requiredString(
+value,
+fieldName
+) {
 
-    const normalized = String(value || "").trim();
+const normalized =
+String(value || "").trim();
 
-    if (!normalized) {
-        const error = new Error(`${fieldName} is required.`);
-        error.statusCode = 400;
-        throw error;
-    }
+if (!normalized) {
 
-    return normalized;
+const error =
+new Error(
+`${fieldName} is required.`
+);
+
+error.statusCode = 400;
+
+throw error;
+
+}
+
+return normalized;
+
 }
 
 
 function normalizeCurrency(value) {
 
-    const currency = requiredString(
-        value,
-        "currency"
-    ).toUpperCase();
+const currency =
+requiredString(
+value,
+"currency"
+).toUpperCase();
 
-    if (!SUPPORTED_CURRENCIES.has(currency)) {
-        const error = new Error(
-            "currency must be USD, NGN, CAD, GBP, or EUR."
-        );
-        error.statusCode = 400;
-        throw error;
-    }
+if (
+!SUPPORTED_CURRENCIES.has(
+currency
+)
+) {
 
-    return currency;
+const error =
+new Error(
+"Senku Pay checkout currently supports USD only."
+);
+
+error.statusCode = 400;
+
+throw error;
+
+}
+
+return currency;
+
 }
 
 
 function normalizeAmount(value) {
 
-    const amount = Number(value);
+const amount =
+Number(value);
 
-    if (!Number.isFinite(amount)) {
-        const error = new Error(
-            "amount must be a valid number."
-        );
-        error.statusCode = 400;
-        throw error;
-    }
+if (!Number.isFinite(amount)) {
 
-    if (amount < 0.5) {
-        const error = new Error(
-            "amount must be at least 0.50."
-        );
-        error.statusCode = 400;
-        throw error;
-    }
+const error =
+new Error(
+"amount must be a valid number."
+);
 
-    return Math.round((amount + Number.EPSILON) * 100) / 100;
+error.statusCode = 400;
+
+throw error;
+
+}
+
+if (amount < 0.5) {
+
+const error =
+new Error(
+"amount must be at least 0.50."
+);
+
+error.statusCode = 400;
+
+throw error;
+
+}
+
+return Math.round(
+(amount + Number.EPSILON) * 100
+) / 100;
+
 }
 
 
-function normalizePaymentLinkResponse(providerResponse) {
+function normalizePaymentMethod(value) {
 
-    const data = providerResponse?.data;
-    const application = data?.application;
-    const paymentUrl = String(data?.url || "").trim();
-    const paymentLinkId = String(application?.id || "").trim();
+const method =
+String(value || "")
+.trim()
+.toLowerCase();
 
-    if (!paymentUrl || !paymentLinkId) {
-        const error = new Error(
-            "CentryOS returned an incomplete payment-link response."
-        );
+const selected =
+PAYMENT_METHODS[method];
 
-        error.statusCode = 502;
-        error.providerResponse = providerResponse;
-        throw error;
-    }
+if (!selected) {
 
-    let expiredAt = null;
+const error =
+new Error(
+"paymentMethod must be card, cashapp, applepay, or googlepay."
+);
 
-    if (application?.expiredAt) {
-        const parsedDate = new Date(application.expiredAt);
+error.statusCode = 400;
 
-        if (!Number.isNaN(parsedDate.getTime())) {
-            expiredAt = parsedDate;
-        }
-    }
+throw error;
 
-    return {
-        paymentUrl,
-        paymentLinkId,
-        token: application?.token
-            ? String(application.token)
-            : null,
-        tokenType: application?.tokenType
-            ? String(application.tokenType)
-            : null,
-        expiredAt,
-        valid: application?.valid === true,
-        providerResponse
-    };
+}
+
+return {
+key:
+method,
+...selected
+};
+
+}
+
+
+function normalizePaymentLinkResponse(
+providerResponse
+) {
+
+const data =
+providerResponse?.data;
+
+const application =
+data?.application;
+
+const paymentUrl =
+String(
+data?.url || ""
+).trim();
+
+const paymentLinkId =
+String(
+application?.id || ""
+).trim();
+
+if (
+!paymentUrl ||
+!paymentLinkId
+) {
+
+const error =
+new Error(
+"CentryOS returned an incomplete payment-link response."
+);
+
+error.statusCode = 502;
+
+error.providerResponse =
+providerResponse;
+
+throw error;
+
+}
+
+let expiredAt = null;
+
+if (application?.expiredAt) {
+
+const parsedDate =
+new Date(
+application.expiredAt
+);
+
+if (
+!Number.isNaN(
+parsedDate.getTime()
+)
+) {
+
+expiredAt =
+parsedDate;
+
+}
+
+}
+
+return {
+
+paymentUrl,
+paymentLinkId,
+
+token:
+application?.token
+? String(application.token)
+: null,
+
+tokenType:
+application?.tokenType
+? String(application.tokenType)
+: null,
+
+expiredAt,
+
+valid:
+application?.valid === true,
+
+providerResponse
+
+};
+
 }
 
 
@@ -130,98 +282,167 @@ function normalizePaymentLinkResponse(providerResponse) {
 ==================================================*/
 
 async function createCentryosPaymentLink({
-    depositId,
-    userId,
-    userEmail,
-    username,
-    amount,
-    currency,
-    itemDeliveryAddress,
-    redirectTo
+
+depositId,
+userId,
+userEmail,
+username,
+amount,
+currency,
+paymentMethod,
+itemDeliveryAddress,
+redirectTo
+
 }) {
 
-    const normalizedDepositId = requiredString(
-        depositId,
-        "depositId"
-    );
+const normalizedDepositId =
+requiredString(
+depositId,
+"depositId"
+);
 
-    const normalizedUserId = requiredString(
-        userId,
-        "userId"
-    );
+const normalizedUserId =
+requiredString(
+userId,
+"userId"
+);
 
-    const normalizedEmail = requiredString(
-        userEmail,
-        "userEmail"
-    );
+const normalizedEmail =
+requiredString(
+userEmail,
+"userEmail"
+);
 
-    const normalizedUsername = requiredString(
-        username,
-        "username"
-    );
+const normalizedUsername =
+requiredString(
+username,
+"username"
+);
 
-    const normalizedAmount = normalizeAmount(amount);
-    const normalizedCurrency = normalizeCurrency(currency);
+const normalizedAmount =
+normalizeAmount(amount);
 
-    const deliveryAddress = requiredString(
-        itemDeliveryAddress,
-        "itemDeliveryAddress"
-    );
+const normalizedCurrency =
+normalizeCurrency(currency);
 
-    const normalizedRedirectTo = requiredString(
-        redirectTo,
-        "redirectTo"
-    );
+const normalizedMethod =
+normalizePaymentMethod(
+paymentMethod
+);
 
-    const providerResponse = await centryosPost(
-        "ledger",
-        "/v1/ext/collections/payment-link",
-        {
-            currency: normalizedCurrency,
-            name: "Senku Pay account funding",
-            amount: normalizedAmount,
-            customUrlPath: `senkupay-${normalizedDepositId}`,
-            redirectTo: normalizedRedirectTo,
+const deliveryAddress =
+requiredString(
+itemDeliveryAddress,
+"itemDeliveryAddress"
+);
 
-            // One deposit request must not be reusable.
-            checkoutType: "generic",
-            isOpenLink: false,
-            customerPays: true,
+const normalizedRedirectTo =
+requiredString(
+redirectTo,
+"redirectTo"
+);
 
-            orderId: normalizedDepositId,
-            externalId: normalizedDepositId,
+const providerResponse =
+await centryosPost(
+"ledger",
+"/v1/ext/collections/payment-link",
+{
 
-            acceptedPaymentOptions: [
-                "card"
-            ],
+currency:
+normalizedCurrency,
 
-            notifyPayee: false,
+name:
+"Senku Pay account funding",
 
-            itemDeliveryAddress: deliveryAddress,
+amount:
+normalizedAmount,
 
-            cartItems: [
-                {
-                    name: "Senku Pay account funding",
-                    description:
-                        `Account funding for Senku Pay user ${normalizedUsername}`,
-                    qty: 1,
-                    price: normalizedAmount,
-                    currency: normalizedCurrency,
-                    productId: "SENKUPAY-ACCOUNT-FUNDING"
-                }
-            ],
+customUrlPath:
+`senkupay-${normalizedDepositId}`,
 
-            customData: {
-                depositId: normalizedDepositId,
-                userId: normalizedUserId,
-                email: normalizedEmail
-            }
-        }
-    );
+redirectTo:
+normalizedRedirectTo,
 
-    return normalizePaymentLinkResponse(
-        providerResponse
-    );
+checkoutType:
+"generic",
+
+isOpenLink:
+false,
+
+/*
+ * Product rule:
+ * the customer pays exactly the entered amount.
+ * CentryOS deducts its processing fee from that
+ * amount before Senku Pay credits the net amount.
+ */
+customerPays:
+false,
+
+/*
+ * Restrict the hosted checkout to the exact method
+ * selected on the Senku Pay page. This also keeps
+ * Pay by Bank hidden.
+ */
+acceptedPaymentOptions: [
+normalizedMethod.providerOption
+],
+
+notifyPayee:
+false,
+
+itemDeliveryAddress:
+deliveryAddress,
+
+cartItems: [
+{
+name:
+"Senku Pay account funding",
+
+description:
+(
+`Account funding for Senku Pay user ` +
+normalizedUsername
+),
+
+qty:
+1,
+
+price:
+normalizedAmount,
+
+currency:
+normalizedCurrency,
+
+productId:
+"SENKUPAY-ACCOUNT-FUNDING"
+}
+],
+
+customData: {
+
+depositId:
+normalizedDepositId,
+
+userId:
+normalizedUserId,
+
+email:
+normalizedEmail,
+
+preferredPaymentMethod:
+normalizedMethod.key,
+
+preferredPaymentMethodLabel:
+normalizedMethod.label
+}
+
+}
+);
+
+return normalizePaymentLinkResponse(
+providerResponse
+);
+
 }
 
 
@@ -230,8 +451,14 @@ async function createCentryosPaymentLink({
 ==================================================*/
 
 module.exports = {
-    SUPPORTED_CURRENCIES,
-    normalizeAmount,
-    normalizeCurrency,
-    createCentryosPaymentLink
+
+SUPPORTED_CURRENCIES,
+PAYMENT_METHODS,
+
+normalizeAmount,
+normalizeCurrency,
+normalizePaymentMethod,
+
+createCentryosPaymentLink
+
 };
