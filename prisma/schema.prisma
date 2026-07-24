@@ -144,12 +144,39 @@ model User {
   deposits         Deposit[]
   withdrawRequests WithdrawRequest[]
 
-  kycVerification KycVerification?
-  kycDocuments    KycDocument[]
-  kycAuditLogs    KycAuditLog[]
-  centryosWallets CentryosWallet[]
+  kycVerification                     KycVerification?
+  kycDocuments                        KycDocument[]
+  kycAuditLogs                        KycAuditLog[]
+  centryosWallets                     CentryosWallet[]
+  centryosLinkedAccountWidgetSessions CentryosLinkedAccountWidgetSession[]
 
   @@index([status])
+  @@index([createdAt])
+}
+
+model CentryosLinkedAccountWidgetSession {
+  id String @id @default(cuid())
+
+  userId String
+
+  applicationId String @unique
+  customerId    String
+  currency      String
+
+  providerValid Boolean   @default(true)
+  expiresAt     DateTime?
+  status        String    @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([customerId])
+  @@index([currency])
+  @@index([status])
+  @@index([expiresAt])
   @@index([createdAt])
 }
 
