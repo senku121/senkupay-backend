@@ -3,24 +3,17 @@
   CENTRYOS LINKED ACCOUNT WIDGET ROUTES
 ==================================================*/
 
-const express =
-    require("express");
+const express = require("express");
 
 const {
     verifyToken
-} = require(
-    "../middleware/authMiddleware"
-);
+} = require("../middleware/authMiddleware");
 
 const {
     createWidget
-} = require(
-    "../controllers/centryosLinkedAccountController"
-);
+} = require("../controllers/centryosLinkedAccountController");
 
-const router =
-    express.Router();
-
+const router = express.Router();
 
 router.post(
     "/linked-account-widget",
@@ -28,6 +21,4 @@ router.post(
     createWidget
 );
 
-
-module.exports =
-    router;
+module.exports = router;
