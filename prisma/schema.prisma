@@ -98,6 +98,10 @@ model User {
   resetOtpExpiry DateTime?
   resetVerified  Boolean   @default(false)
 
+  // CentryOS end-user account connection
+  centryosAccountId        String?   @unique
+  centryosAccountCreatedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 

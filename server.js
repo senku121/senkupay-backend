@@ -26,6 +26,8 @@ const platformWithdrawRoutes =
 require("./routes/platformWithdrawRoutes");
 const centryosAdminRoutes =
 require("./routes/centryosAdminRoutes");
+const centryosAccountRoutes =
+require("./routes/centryosAccountRoutes");
 
 
 const app = express();
@@ -147,6 +149,10 @@ app.use(
 app.use(
     "/api/admin/centryos",
     centryosAdminRoutes
+);
+app.use(
+    "/api/centryos",
+    centryosAccountRoutes
 );
 
 const PORT = process.env.PORT || 5000;
