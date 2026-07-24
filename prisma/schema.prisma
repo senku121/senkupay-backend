@@ -132,7 +132,7 @@ model CentryosWallet {
   slug             String?
   currency         String
   providerBalance  String?
-  walletType       String  @default("USER")
+  walletType       String
   displayCurrency  String?
 
   permissions     Json?
@@ -144,9 +144,10 @@ model CentryosWallet {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, currency])
+  @@unique([userId, currency, walletType])
   @@index([userId])
   @@index([currency])
+  @@index([walletType])
   @@index([createdAt])
 }
 

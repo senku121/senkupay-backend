@@ -6,6 +6,7 @@
 const { PrismaClient } = require("@prisma/client");
 
 const {
+    normalizeWalletType,
     createEndUserWallets
 } = require("../services/centryosWalletService");
 
@@ -41,6 +42,10 @@ exports.createMyCentryosWallets = async (req, res) => {
 
     try {
 
+        const walletType = normalizeWalletType(
+            req.body?.walletType
+        );
+
         const user = await prisma.user.findUnique({
             where: {
                 id: req.user.id
@@ -51,6 +56,9 @@ exports.createMyCentryosWallets = async (req, res) => {
                 emailVerified: true,
                 centryosAccountId: true,
                 centryosWallets: {
+                    where: {
+                        walletType
+                    },
                     orderBy: {
                         currency: "asc"
                     }
@@ -89,27 +97,26 @@ exports.createMyCentryosWallets = async (req, res) => {
         }
 
         /*
-         * Never call the provider create endpoint again
-         * after wallets have been saved locally.
+         * Prevent repeating the create call for the same wallet type,
+         * while still allowing COLLECTION and SPEND to be created
+         * independently.
          */
         if (user.centryosWallets.length > 0) {
             return res.status(200).json({
                 success: true,
                 message:
-                    "Your CentryOS wallets are already connected.",
+                    `Your CentryOS ${walletType} wallets are already connected.`,
                 alreadyCreated: true,
+                walletType,
                 wallets: user.centryosWallets.map(
                     walletResponse
                 )
             });
         }
 
-        /*
-         * The provider network request is completed
-         * before opening the database transaction.
-         */
         const result = await createEndUserWallets(
-            user.centryosAccountId
+            user.centryosAccountId,
+            walletType
         );
 
         const savedWallets = await prisma.$transaction(
@@ -121,9 +128,10 @@ exports.createMyCentryosWallets = async (req, res) => {
 
                     const saved = await tx.centryosWallet.upsert({
                         where: {
-                            userId_currency: {
+                            userId_currency_walletType: {
                                 userId: user.id,
-                                currency: wallet.currency
+                                currency: wallet.currency,
+                                walletType: result.walletType
                             }
                         },
                         create: {
@@ -133,7 +141,7 @@ exports.createMyCentryosWallets = async (req, res) => {
                             currency: wallet.currency,
                             providerBalance:
                                 wallet.providerBalance,
-                            walletType: wallet.walletType,
+                            walletType: result.walletType,
                             displayCurrency:
                                 wallet.displayCurrency,
                             permissions: wallet.permissions,
@@ -146,7 +154,6 @@ exports.createMyCentryosWallets = async (req, res) => {
                             slug: wallet.slug,
                             providerBalance:
                                 wallet.providerBalance,
-                            walletType: wallet.walletType,
                             displayCurrency:
                                 wallet.displayCurrency,
                             permissions: wallet.permissions,
@@ -166,8 +173,9 @@ exports.createMyCentryosWallets = async (req, res) => {
         return res.status(201).json({
             success: true,
             message:
-                "CentryOS wallets created and connected successfully.",
+                `CentryOS ${result.walletType} wallets created and connected successfully.`,
             alreadyCreated: false,
+            walletType: result.walletType,
             wallets: savedWallets.map(walletResponse)
         });
 
@@ -186,7 +194,7 @@ exports.createMyCentryosWallets = async (req, res) => {
             providerStatus === 400 ||
             providerStatus === 409
         ) {
-            return res.status(409).json({
+            return res.status(providerStatus).json({
                 success: false,
                 message:
                     error.message ||
@@ -221,6 +229,14 @@ exports.getMyCentryosWallets = async (req, res) => {
 
     try {
 
+        let walletType;
+
+        if (req.query.walletType) {
+            walletType = normalizeWalletType(
+                req.query.walletType
+            );
+        }
+
         const user = await prisma.user.findUnique({
             where: {
                 id: req.user.id
@@ -229,9 +245,13 @@ exports.getMyCentryosWallets = async (req, res) => {
                 id: true,
                 centryosAccountId: true,
                 centryosWallets: {
-                    orderBy: {
-                        currency: "asc"
-                    }
+                    where: walletType
+                        ? { walletType }
+                        : undefined,
+                    orderBy: [
+                        { walletType: "asc" },
+                        { currency: "asc" }
+                    ]
                 }
             }
         });
@@ -254,6 +274,7 @@ exports.getMyCentryosWallets = async (req, res) => {
         return res.status(200).json({
             success: true,
             accountId: user.centryosAccountId,
+            walletType: walletType || null,
             wallets: user.centryosWallets.map(
                 walletResponse
             )
@@ -266,9 +287,16 @@ exports.getMyCentryosWallets = async (req, res) => {
             error
         );
 
-        return res.status(500).json({
+        const status = Number(error.statusCode || 500);
+
+        return res.status(
+            status >= 400 && status < 500
+                ? status
+                : 500
+        ).json({
             success: false,
             message:
+                error.message ||
                 "Unable to load your connected wallets."
         });
     }

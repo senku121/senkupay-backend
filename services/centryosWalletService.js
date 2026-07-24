@@ -9,6 +9,16 @@ const {
 
 
 /*==================================================
+                    CONSTANTS
+==================================================*/
+
+const ALLOWED_WALLET_TYPES = new Set([
+    "COLLECTION",
+    "SPEND"
+]);
+
+
+/*==================================================
                     HELPERS
 ==================================================*/
 
@@ -24,7 +34,27 @@ function requiredString(value, fieldName) {
 }
 
 
-function normalizeWallet(wallet) {
+function normalizeWalletType(value) {
+
+    const walletType = requiredString(
+        value,
+        "CentryOS wallet type"
+    ).toUpperCase();
+
+    if (!ALLOWED_WALLET_TYPES.has(walletType)) {
+        const error = new Error(
+            "walletType must be COLLECTION or SPEND."
+        );
+
+        error.statusCode = 400;
+        throw error;
+    }
+
+    return walletType;
+}
+
+
+function normalizeWallet(wallet, requestedWalletType) {
 
     const id = requiredString(
         wallet?.id,
@@ -59,10 +89,11 @@ function normalizeWallet(wallet) {
             wallet?.balance !== null
                 ? String(wallet.balance)
                 : null,
-        walletType:
-            settings?.walletType
-                ? String(settings.walletType).trim()
-                : "USER",
+
+        // Store the accepted request type. The provider guide may
+        // return a different settings.walletType value.
+        walletType: requestedWalletType,
+
         displayCurrency:
             settings?.displayCurrency
                 ? String(settings.displayCurrency)
@@ -80,11 +111,18 @@ function normalizeWallet(wallet) {
             CREATE END-USER WALLETS
 ==================================================*/
 
-async function createEndUserWallets(entityId) {
+async function createEndUserWallets(
+    entityId,
+    requestedWalletType
+) {
 
     const normalizedEntityId = requiredString(
         entityId,
         "CentryOS entity ID"
+    );
+
+    const walletType = normalizeWalletType(
+        requestedWalletType
     );
 
     const providerResponse = await centryosPost(
@@ -92,7 +130,7 @@ async function createEndUserWallets(entityId) {
         "/v1/ext/wallet/create",
         {
             entityId: normalizedEntityId,
-            walletType: "USER"
+            walletType
         }
     );
 
@@ -109,7 +147,10 @@ async function createEndUserWallets(entityId) {
     }
 
     const wallets = providerResponse.wallets.map(
-        normalizeWallet
+        (wallet) => normalizeWallet(
+            wallet,
+            walletType
+        )
     );
 
     if (wallets.length === 0) {
@@ -125,6 +166,7 @@ async function createEndUserWallets(entityId) {
     }
 
     return {
+        walletType,
         wallets,
         providerResponse
     };
@@ -136,5 +178,7 @@ async function createEndUserWallets(entityId) {
 ==================================================*/
 
 module.exports = {
+    ALLOWED_WALLET_TYPES,
+    normalizeWalletType,
     createEndUserWallets
 };
