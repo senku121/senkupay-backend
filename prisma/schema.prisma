@@ -1,3 +1,38 @@
+/**
+ * Add this as a new model anywhere at the top level of schema.prisma.
+ * eventKey is unique and prevents the same provider event from being
+ * processed more than once.
+ */
+model CentryosWebhookEvent {
+  id String @id @default(cuid())
+
+  eventKey String @unique
+
+  eventType String
+  status    String
+
+  transactionId String?
+  paymentLinkId String?
+  depositId     String?
+
+  signature        String?
+  processingStatus String  @default("RECEIVED")
+  payload          Json
+  errorMessage     String?
+
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+
+  @@index([eventType])
+  @@index([status])
+  @@index([transactionId])
+  @@index([paymentLinkId])
+  @@index([depositId])
+  @@index([processingStatus])
+  @@index([createdAt])
+}
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -398,6 +433,12 @@ model Deposit {
   paymentTokenType      String?
   providerStatus        String?
   providerPayload       Json?
+
+  // CentryOS collection-webhook settlement data.
+  providerTransactionId String?   @unique
+  providerMethod        String?
+  providerFee           Float?
+  webhookReceivedAt     DateTime?
 
   status String @default("PENDING")
 

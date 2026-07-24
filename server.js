@@ -32,6 +32,9 @@ const centryosWalletRoutes =
 require("./routes/centryosWalletRoutes");
 const centryosCheckoutRoutes =
 require("./routes/centryosCheckoutRoutes");
+const centryosWebhookRoutes =
+require("./routes/centryosWebhookRoutes");
+
 
 
 const app = express();
@@ -103,7 +106,32 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-app.use(express.json());
+app.use(
+    express.json({
+
+        limit: "1mb",
+
+        verify: (req, res, buffer) => {
+
+            /*
+             * Preserve the exact request bytes.
+             * CentryOS signs the raw JSON body, not
+             * JSON.stringify(req.body).
+             */
+            req.rawBody =
+                Buffer.from(buffer);
+
+        }
+
+    })
+);
+
+
+app.use(
+    "/api/webhooks/centryos",
+    centryosWebhookRoutes
+);
+
 
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
