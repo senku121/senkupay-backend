@@ -14,6 +14,7 @@ model CentryosWebhookEvent {
   transactionId String?
   paymentLinkId String?
   depositId     String?
+  withdrawalId  String?
 
   signature        String?
   processingStatus String  @default("RECEIVED")
@@ -29,6 +30,7 @@ model CentryosWebhookEvent {
   @@index([transactionId])
   @@index([paymentLinkId])
   @@index([depositId])
+  @@index([withdrawalId])
   @@index([processingStatus])
   @@index([createdAt])
 }
@@ -511,6 +513,8 @@ model Deposit {
   providerTransactionId String?   @unique
   providerMethod        String?
   providerFee           Float?
+  customerPaidAmount    Float?
+  netAmount             Float?
   webhookReceivedAt     DateTime?
 
   status String @default("PENDING")
@@ -561,6 +565,7 @@ model WithdrawRequest {
   providerTransactionId String? @unique
   providerStatus        String?
   providerFee           Float?
+  providerNetAmount     Float?
   providerDebitedAmount Float?
   providerResponse      Json?
   lastProviderError     String?
@@ -569,13 +574,14 @@ model WithdrawRequest {
 
   processedByAdminId String?
 
-  lastAttemptAt    DateTime?
-  providerQueuedAt DateTime?
-  approvedAt       DateTime?
-  rejectedAt       DateTime?
-  completedAt      DateTime?
-  failedAt         DateTime?
-  processedAt      DateTime?
+  lastAttemptAt     DateTime?
+  providerQueuedAt  DateTime?
+  webhookReceivedAt DateTime?
+  approvedAt        DateTime?
+  rejectedAt        DateTime?
+  completedAt       DateTime?
+  failedAt          DateTime?
+  processedAt       DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt

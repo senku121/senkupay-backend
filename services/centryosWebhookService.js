@@ -7,7 +7,7 @@ const crypto = require("crypto");
 
 
 /*==================================================
-                    HELPERS
+                    SECRET
 ==================================================*/
 
 function getRequiredWebhookSecret() {
@@ -26,21 +26,16 @@ function getRequiredWebhookSecret() {
 }
 
 
+/*==================================================
+               SIGNATURE VERIFICATION
+==================================================*/
+
 function normalizeSignature(value) {
 
-    let signature = String(value || "").trim();
-
-    /*
-     * The CentryOS guide shows a plain hexadecimal
-     * signature. This also accepts an optional
-     * "sha512=" prefix without weakening validation.
-     */
-    signature = signature.replace(
-        /^sha512=/i,
-        ""
-    );
-
-    return signature.toLowerCase();
+    return String(value || "")
+        .trim()
+        .replace(/^sha512=/i, "")
+        .toLowerCase();
 }
 
 
@@ -53,19 +48,19 @@ function verifyCentryosWebhookSignature(
         return false;
     }
 
-    const normalizedReceived =
+    const received =
         normalizeSignature(
             receivedSignature
         );
 
     if (
-        !normalizedReceived ||
-        !/^[a-f0-9]+$/i.test(normalizedReceived)
+        !received ||
+        !/^[a-f0-9]+$/i.test(received)
     ) {
         return false;
     }
 
-    const expectedSignature = crypto
+    const expected = crypto
         .createHmac(
             "sha512",
             getRequiredWebhookSecret()
@@ -75,16 +70,10 @@ function verifyCentryosWebhookSignature(
         .toLowerCase();
 
     const expectedBuffer =
-        Buffer.from(
-            expectedSignature,
-            "utf8"
-        );
+        Buffer.from(expected, "utf8");
 
     const receivedBuffer =
-        Buffer.from(
-            normalizedReceived,
-            "utf8"
-        );
+        Buffer.from(received, "utf8");
 
     if (
         expectedBuffer.length !==
@@ -99,6 +88,10 @@ function verifyCentryosWebhookSignature(
     );
 }
 
+
+/*==================================================
+                    NORMALIZERS
+==================================================*/
 
 function safeJson(value) {
 
@@ -124,54 +117,56 @@ function normalizeUpper(value) {
 
 function normalizeString(value) {
 
-    const result =
+    const text =
         String(value || "").trim();
 
-    return result || null;
+    return text || null;
 }
 
 
 function normalizeMoney(value) {
 
-    const number = Number(value);
+    const amount =
+        Number(value);
 
-    if (!Number.isFinite(number)) {
+    if (!Number.isFinite(amount)) {
         return null;
     }
 
     return Math.round(
-        (number + Number.EPSILON) * 100
+        (amount + Number.EPSILON) * 100
     ) / 100;
 }
 
 
 function moneyToMinorUnits(value) {
 
-    const number = normalizeMoney(value);
+    const amount =
+        normalizeMoney(value);
 
-    if (number === null) {
-        return null;
-    }
-
-    return Math.round(number * 100);
+    return amount === null
+        ? null
+        : Math.round(amount * 100);
 }
 
 
 function parseProviderTimestamp(value) {
 
-    const number = Number(value);
+    const timestamp =
+        Number(value);
 
-    if (!Number.isFinite(number)) {
+    if (!Number.isFinite(timestamp)) {
         return new Date();
     }
 
-    const date = new Date(number);
+    const result =
+        new Date(timestamp);
 
-    if (Number.isNaN(date.getTime())) {
-        return new Date();
-    }
-
-    return date;
+    return Number.isNaN(
+        result.getTime()
+    )
+        ? new Date()
+        : result;
 }
 
 
@@ -187,7 +182,11 @@ function uniqueStrings(values) {
 }
 
 
-function extractCollectionEvent(body) {
+/*==================================================
+               GENERIC EVENT PARSER
+==================================================*/
+
+function extractCentryosEvent(body) {
 
     const payload =
         body &&
@@ -233,70 +232,66 @@ function extractCollectionEvent(body) {
             paymentLink.id
         );
 
-    const localDepositReferences =
-        uniqueStrings([
-            metadata.depositId,
-            metadata.orderId,
-            metadata.externalId,
-
-            customData.depositId,
-            customData.orderId,
-            customData.externalId,
-
-            paymentLink.externalId
-        ]);
-
     return {
         eventType,
         status,
 
         transactionId,
+        paymentLinkId,
+
         walletId:
             normalizeString(
                 payload.walletId
             ),
+
         entityId:
             normalizeString(
                 payload.entityId
             ),
+
         entityType:
             normalizeUpper(
                 payload.entityType
+            ),
+
+        entry:
+            normalizeUpper(
+                payload.entry
             ),
 
         method:
             normalizeUpper(
                 payload.method
             ),
-        summary:
-            normalizeString(
-                payload.summary
-            ),
-        entry:
-            normalizeUpper(
-                payload.entry
-            ),
 
         amount:
             normalizeMoney(
                 payload.amount
             ),
+
         amountMinor:
             moneyToMinorUnits(
                 payload.amount
             ),
-        currency:
-            normalizeUpper(
-                payload.currency
-            ),
+
         feeCharged:
             normalizeMoney(
                 payload.feeCharged
             ),
 
-        occurredAt:
-            parseProviderTimestamp(
-                payload.timestamp
+        currency:
+            normalizeUpper(
+                payload.currency
+            ),
+
+        summary:
+            normalizeString(
+                payload.summary
+            ),
+
+        description:
+            normalizeString(
+                payload.description
             ),
 
         reason:
@@ -304,13 +299,28 @@ function extractCollectionEvent(body) {
                 payload.reason
             ),
 
-        paymentLinkId,
+        occurredAt:
+            parseProviderTimestamp(
+                payload.timestamp
+            ),
+
         paymentLinkExternalId:
             normalizeString(
                 paymentLink.externalId
             ),
 
-        localDepositReferences,
+        localDepositReferences:
+            uniqueStrings([
+                metadata.depositId,
+                metadata.orderId,
+                metadata.externalId,
+
+                customData.depositId,
+                customData.orderId,
+                customData.externalId,
+
+                paymentLink.externalId
+            ]),
 
         payload,
         metadata,
@@ -319,15 +329,33 @@ function extractCollectionEvent(body) {
 }
 
 
-function createEventKey(event, rawBody) {
+/*==================================================
+                 IDEMPOTENCY KEY
+==================================================*/
+
+function createEventKey(
+    event,
+    rawBody
+) {
+
+    const fallbackHash =
+        crypto
+            .createHash("sha256")
+            .update(
+                Buffer.isBuffer(rawBody)
+                    ? rawBody
+                    : Buffer.from(
+                        JSON.stringify(
+                            rawBody || {}
+                        )
+                    )
+            )
+            .digest("hex");
 
     const stableReference =
         event.transactionId ||
         event.paymentLinkId ||
-        crypto
-            .createHash("sha256")
-            .update(rawBody)
-            .digest("hex");
+        fallbackHash;
 
     return [
         event.eventType || "UNKNOWN",
@@ -344,7 +372,8 @@ function createEventKey(event, rawBody) {
 module.exports = {
     verifyCentryosWebhookSignature,
     safeJson,
-    extractCollectionEvent,
+    extractCentryosEvent,
     createEventKey,
+    normalizeMoney,
     moneyToMinorUnits
 };

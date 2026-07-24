@@ -9,7 +9,8 @@ const express =
 const {
     getAllWithdraws,
     approveWithdraw,
-    rejectWithdraw
+    rejectWithdraw,
+    reconcileWithdraw
 } = require(
     "../controllers/adminWithdrawController"
 );
@@ -42,6 +43,13 @@ router.post(
     "/:id/reject",
     verifyAdminToken,
     rejectWithdraw
+);
+
+
+router.post(
+    "/:id/reconcile",
+    verifyAdminToken,
+    reconcileWithdraw
 );
 
 

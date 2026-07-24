@@ -3,26 +3,42 @@
         CENTRYOS WEBHOOK ROUTES
 ==================================================*/
 
-const express = require("express");
+const express =
+    require("express");
 
 const {
-    handleCollectionWebhook
+    handleCentryosWebhook
 } = require(
     "../controllers/centryosWebhookController"
 );
 
-const router = express.Router();
+const router =
+    express.Router();
 
 
 /*
- * Do not add Senku Pay login middleware here.
- * CentryOS authenticates this request using its
- * SHA-512 HMAC signature.
+ * Keep /collection because it is the URL already
+ * registered in the CentryOS dashboard.
+ *
+ * The handler is now generic and safely processes
+ * both COLLECTION and WITHDRAWAL events received at
+ * this existing URL.
  */
 router.post(
     "/collection",
-    handleCollectionWebhook
+    handleCentryosWebhook
 );
 
 
-module.exports = router;
+/*
+ * Optional future endpoint. Register it only if
+ * CentryOS supports separate webhook URLs by event.
+ */
+router.post(
+    "/withdrawal",
+    handleCentryosWebhook
+);
+
+
+module.exports =
+    router;

@@ -13,6 +13,18 @@ const {
     "../services/centryosPayoutService"
 );
 
+const {
+    getTransactionWebhookPayload
+} = require(
+    "../services/centryosPayoutStatusService"
+);
+
+const {
+    processCentryosEvent
+} = require(
+    "../services/centryosWebhookProcessor"
+);
+
 const prisma =
     new PrismaClient();
 
@@ -684,6 +696,122 @@ async (req, res) => {
             message:
                 error.message ||
                 "Unable to reject withdrawal."
+        });
+    }
+};
+
+
+/*==================================================
+       RECONCILE MISSED PAYOUT WEBHOOK
+==================================================*/
+
+exports.reconcileWithdraw =
+async (req, res) => {
+
+    try {
+
+        const withdrawal =
+            await prisma
+                .withdrawRequest
+                .findUnique({
+
+                    where: {
+                        id:
+                            req.params.id
+                    }
+                });
+
+        if (!withdrawal) {
+
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Withdrawal request not found."
+            });
+        }
+
+        if (
+            !withdrawal
+                .providerTransactionId
+        ) {
+
+            return res.status(409).json({
+                success: false,
+                message:
+                    "This withdrawal has no CentryOS transaction ID yet."
+            });
+        }
+
+        const providerEvent =
+            await getTransactionWebhookPayload(
+                withdrawal
+                    .providerTransactionId
+            );
+
+        const result =
+            await processCentryosEvent({
+
+                body:
+                    providerEvent,
+
+                rawBody:
+                    Buffer.from(
+                        JSON.stringify(
+                            providerEvent
+                        )
+                    ),
+
+                signature:
+                    "SERVER_RECONCILIATION",
+
+                source:
+                    "RECONCILIATION"
+            });
+
+        const updated =
+            await prisma
+                .withdrawRequest
+                .findUnique({
+
+                    where: {
+                        id:
+                            withdrawal.id
+                    }
+                });
+
+        return res.status(200).json({
+
+            success: true,
+
+            message:
+                "CentryOS payout status reconciled.",
+
+            outcome:
+                result.outcome,
+
+            withdrawal:
+                updated
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Reconcile withdrawal error:",
+            error
+        );
+
+        return res.status(
+            error.statusCode || 500
+        ).json({
+
+            success: false,
+
+            message:
+                error.message ||
+                "Unable to reconcile this withdrawal.",
+
+            providerResponse:
+                error.providerResponse
         });
     }
 };
