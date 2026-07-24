@@ -34,6 +34,8 @@ const centryosCheckoutRoutes =
 require("./routes/centryosCheckoutRoutes");
 const centryosWebhookRoutes =
 require("./routes/centryosWebhookRoutes");
+const centryosLinkedAccountRoutes =
+require("./routes/centryosLinkedAccountRoutes");
 
 
 
@@ -194,6 +196,10 @@ app.use(
 app.use(
     "/api/centryos",
     centryosCheckoutRoutes
+);
+app.use(
+    "/api/centryos",
+    centryosLinkedAccountRoutes
 );
 
 const PORT = process.env.PORT || 5000;
