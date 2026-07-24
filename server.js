@@ -28,6 +28,8 @@ const centryosAdminRoutes =
 require("./routes/centryosAdminRoutes");
 const centryosAccountRoutes =
 require("./routes/centryosAccountRoutes");
+const centryosWalletRoutes =
+require("./routes/centryosWalletRoutes");
 
 
 const app = express();
@@ -153,6 +155,10 @@ app.use(
 app.use(
     "/api/centryos",
     centryosAccountRoutes
+);
+app.use(
+    "/api/centryos",
+    centryosWalletRoutes
 );
 
 const PORT = process.env.PORT || 5000;
