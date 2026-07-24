@@ -1,407 +1,689 @@
 /*==================================================
                 SENKU PAY
-        ADMIN WITHDRAW CONTROLLER
+        ADMIN PUSH-TO-CARD CONTROLLER
 ==================================================*/
 
-const { PrismaClient } = require("@prisma/client");
+const {
+    PrismaClient
+} = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const {
+    submitPushToCardPayout
+} = require(
+    "../services/centryosPayoutService"
+);
 
-/*==================================
-        GET ALL WITHDRAWALS
-==================================*/
+const prisma =
+    new PrismaClient();
 
-exports.getAllWithdraws = async (req, res) => {
+
+/*==================================================
+                    HELPERS
+==================================================*/
+
+function normalizeStatus(value) {
+
+    const status =
+        String(value || "")
+            .trim()
+            .toUpperCase();
+
+    return status || null;
+}
+
+
+function safeJson(value) {
+
+    try {
+        return JSON.parse(
+            JSON.stringify(value)
+        );
+    } catch {
+        return {
+            value:
+                String(value)
+        };
+    }
+}
+
+
+function wasRecentlyAttempted(date) {
+
+    if (!date) {
+        return false;
+    }
+
+    return (
+        Date.now() -
+        new Date(date).getTime()
+    ) < 60_000;
+}
+
+
+/*==================================================
+            GET ALL WITHDRAWALS
+==================================================*/
+
+exports.getAllWithdraws =
+async (req, res) => {
 
     try {
 
-        const {
+        const page =
+            Math.max(
+                Number.parseInt(
+                    req.query.page,
+                    10
+                ) || 1,
+                1
+            );
 
-            page = 1,
+        const limit =
+            Math.min(
+                Math.max(
+                    Number.parseInt(
+                        req.query.limit,
+                        10
+                    ) || 20,
+                    1
+                ),
+                100
+            );
 
-            limit = 20,
+        const requestedStatus =
+            normalizeStatus(
+                req.query.status
+            );
 
-            status
-
-        } = req.query;
-
-        const where = {};
-
-        if (status) {
-
-            where.status = status;
-
-        }
-
-        const skip =
-            (Number(page) - 1) *
-            Number(limit);
+        const where =
+            requestedStatus
+                ? {
+                    status:
+                        requestedStatus
+                }
+                : {};
 
         const [
-
             total,
-
             withdrawals
-
         ] = await Promise.all([
 
             prisma.withdrawRequest.count({
-
                 where
-
             }),
 
             prisma.withdrawRequest.findMany({
 
                 where,
 
-                skip,
+                skip:
+                    (page - 1) *
+                    limit,
 
-                take: Number(limit),
+                take:
+                    limit,
 
                 include: {
 
                     user: {
-
                         select: {
-
                             id: true,
-
                             username: true,
-
-                            email: true
-
+                            email: true,
+                            balance: true,
+                            lockedBalance: true
                         }
+                    },
 
+                    processedByAdmin: {
+                        select: {
+                            id: true,
+                            username: true,
+                            role: true
+                        }
                     }
-
                 },
 
                 orderBy: {
-
-                    createdAt: "desc"
-
+                    createdAt:
+                        "desc"
                 }
-
             })
-
         ]);
 
         return res.status(200).json({
 
             success: true,
-
             total,
-
-            page: Number(page),
-
-            pages: Math.ceil(
-
-                total /
-
-                Number(limit)
-
-            ),
-
+            page,
+            pages:
+                Math.ceil(
+                    total / limit
+                ),
             withdrawals
-
         });
 
-    }
+    } catch (error) {
 
-    catch (error) {
-
-        console.error(error);
+        console.error(
+            "Get admin withdrawals error:",
+            error
+        );
 
         return res.status(500).json({
-
             success: false,
-
             message:
                 "Unable to load withdrawals."
-
         });
-
     }
-
 };
 
 
-/*==================================
-        APPROVE WITHDRAW
-==================================*/
+/*==================================================
+        APPROVE AND SUBMIT PUSH-TO-CARD
+==================================================*/
 
-exports.approveWithdraw = async (req, res) => {
+exports.approveWithdraw =
+async (req, res) => {
+
+    const { id } =
+        req.params;
 
     try {
 
-        const { id } = req.params;
+        const existing =
+            await prisma
+                .withdrawRequest
+                .findUnique({
+                    where: {
+                        id
+                    }
+                });
+
+        if (!existing) {
+
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Withdrawal request not found."
+            });
+        }
+
+        const currentStatus =
+            normalizeStatus(
+                existing.status
+            );
+
+        if (
+            currentStatus !== "PENDING"
+        ) {
+
+            return res.status(409).json({
+                success: false,
+                message:
+                    `Withdrawal cannot be approved while its status is ${currentStatus}.`
+            });
+        }
+
+        if (
+            wasRecentlyAttempted(
+                existing.lastAttemptAt
+            )
+        ) {
+
+            return res.status(429).json({
+                success: false,
+                message:
+                    "Wait at least one minute before retrying this payout."
+            });
+        }
+
+        if (
+            existing.currency !== "USD" ||
+            existing.method !==
+                "PUSH_TO_CARD" ||
+            existing.linkedAccountType !==
+                "card" ||
+            !existing.linkedAccountId
+        ) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "This request is not a valid USD push-to-card withdrawal."
+            });
+        }
+
+        /*
+         * Claim the request before the network call.
+         * A double-click or concurrent admin request
+         * cannot submit the payout twice.
+         */
+        const claim =
+            await prisma
+                .withdrawRequest
+                .updateMany({
+
+                    where: {
+                        id,
+                        status: {
+                            in: [
+                                "PENDING",
+                                "Pending"
+                            ]
+                        }
+                    },
+
+                    data: {
+                        status:
+                            "PROCESSING",
+
+                        processedByAdminId:
+                            req.user.id,
+
+                        approvedAt:
+                            new Date(),
+
+                        lastAttemptAt:
+                            new Date(),
+
+                        lastProviderError:
+                            null
+                    }
+                });
+
+        if (claim.count !== 1) {
+
+            return res.status(409).json({
+                success: false,
+                message:
+                    "This withdrawal is already being processed."
+            });
+        }
+
+        let providerResult;
+
+        try {
+
+            providerResult =
+                await submitPushToCardPayout({
+
+                    currency:
+                        existing.currency,
+
+                    linkedAccountId:
+                        existing
+                            .linkedAccountId,
+
+                    amount:
+                        existing.amount,
+
+                    reason:
+                        (
+                            existing.reason ||
+                            `Senku Pay withdrawal ${existing.id}`
+                        )
+                });
+
+        } catch (providerError) {
+
+            const uncertainOutcome =
+                !providerError.statusCode ||
+                providerError.statusCode >= 500;
+
+            const nextStatus =
+                uncertainOutcome
+                    ? "REVIEW_REQUIRED"
+                    : "PENDING";
+
+            await prisma.$transaction([
+
+                prisma.withdrawRequest.update({
+
+                    where: {
+                        id
+                    },
+
+                    data: {
+                        status:
+                            nextStatus,
+
+                        providerStatus:
+                            "SUBMISSION_ERROR",
+
+                        providerResponse:
+                            safeJson(
+                                providerError
+                                    .providerResponse ||
+                                {}
+                            ),
+
+                        lastProviderError:
+                            providerError.message,
+
+                        approvedAt:
+                            uncertainOutcome
+                                ? existing.approvedAt
+                                : null
+                    }
+                }),
+
+                prisma.transaction.updateMany({
+
+                    where: {
+                        reference:
+                            id,
+                        type:
+                            "WITHDRAWAL"
+                    },
+
+                    data: {
+                        status:
+                            nextStatus
+                    }
+                })
+            ]);
+
+            return res.status(
+                providerError.statusCode ||
+                502
+            ).json({
+
+                success: false,
+
+                message:
+                    providerError.message,
+
+                withdrawalStatus:
+                    nextStatus,
+
+                providerResponse:
+                    providerError
+                        .providerResponse
+            });
+        }
+
+        const updated =
+            await prisma.$transaction(
+            async (tx) => {
+
+                const withdrawal =
+                    await tx
+                        .withdrawRequest
+                        .update({
+
+                            where: {
+                                id
+                            },
+
+                            data: {
+                                status:
+                                    "PROCESSING",
+
+                                providerTransactionId:
+                                    providerResult
+                                        .providerTransactionId,
+
+                                providerStatus:
+                                    providerResult
+                                        .providerStatus,
+
+                                providerFee:
+                                    providerResult
+                                        .providerFee,
+
+                                providerDebitedAmount:
+                                    providerResult
+                                        .providerDebitedAmount,
+
+                                providerResponse:
+                                    safeJson(
+                                        providerResult
+                                            .providerResponse
+                                    ),
+
+                                providerQueuedAt:
+                                    new Date(),
+
+                                processedAt:
+                                    new Date()
+                            }
+                        });
+
+                await tx.transaction.updateMany({
+
+                    where: {
+                        reference:
+                            id,
+                        type:
+                            "WITHDRAWAL"
+                    },
+
+                    data: {
+                        status:
+                            "PROCESSING",
+
+                        note:
+                            `CentryOS push-to-card payout ${providerResult.providerStatus}`
+                    }
+                });
+
+                return withdrawal;
+            });
+
+        /*
+         * Do not remove lockedBalance and do not
+         * increase withdrawn yet. CentryOS documents
+         * the response as queued/asynchronous. The
+         * payout webhook will finalize success or
+         * restore funds after failure.
+         */
+        return res.status(202).json({
+
+            success: true,
+
+            message:
+                "Push-to-card payout submitted to CentryOS and is processing.",
+
+            withdrawal:
+                updated
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Approve withdrawal error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Unable to submit this withdrawal."
+        });
+    }
+};
+
+
+/*==================================================
+            REJECT WITHDRAWAL
+==================================================*/
+
+exports.rejectWithdraw =
+async (req, res) => {
+
+    try {
+
+        const { id } =
+            req.params;
+
+        const reason =
+            String(
+                req.body?.reason ||
+                "Rejected by administrator."
+            )
+                .trim()
+                .slice(0, 500);
 
         const request =
-            await prisma.withdrawRequest.findUnique({
+            await prisma
+                .withdrawRequest
+                .findUnique({
 
-                where: {
-                    id
-                }
-
-            });
+                    where: {
+                        id
+                    }
+                });
 
         if (!request) {
 
             return res.status(404).json({
-
                 success: false,
-
                 message:
                     "Withdrawal request not found."
-
             });
-
         }
 
-        if (request.status !== "Pending") {
+        if (
+            ![
+                "PENDING",
+                "Pending"
+            ].includes(
+                request.status
+            )
+        ) {
 
-            return res.status(400).json({
-
+            return res.status(409).json({
                 success: false,
-
                 message:
-                    "Withdrawal has already been processed."
-
+                    "Only a pending withdrawal can be rejected."
             });
-
         }
 
-        await prisma.$transaction([
+        const result =
+            await prisma.$transaction(
+            async (tx) => {
 
-            prisma.user.update({
+                const claim =
+                    await tx
+                        .withdrawRequest
+                        .updateMany({
 
-                where: {
+                            where: {
+                                id,
+                                status: {
+                                    in: [
+                                        "PENDING",
+                                        "Pending"
+                                    ]
+                                }
+                            },
 
-                    id: request.userId
+                            data: {
+                                status:
+                                    "REJECTED",
 
-                },
+                                processedByAdminId:
+                                    req.user.id,
 
-                data: {
+                                rejectedAt:
+                                    new Date(),
 
-                    lockedBalance: {
+                                processedAt:
+                                    new Date(),
 
-                        decrement: request.amount
+                                note:
+                                    reason
+                            }
+                        });
 
+                if (claim.count !== 1) {
+
+                    const error =
+                        new Error(
+                            "Withdrawal was already processed."
+                        );
+
+                    error.statusCode =
+                        409;
+
+                    throw error;
+                }
+
+                await tx.user.update({
+
+                    where: {
+                        id:
+                            request.userId
                     },
 
-                    withdrawn: {
+                    data: {
+                        balance: {
+                            increment:
+                                request.amount
+                        },
 
-                        increment: request.amount
-
+                        lockedBalance: {
+                            decrement:
+                                request.amount
+                        }
                     }
+                });
 
-                }
+                await tx.transaction.updateMany({
 
-            }),
+                    where: {
+                        reference:
+                            id,
+                        type:
+                            "WITHDRAWAL"
+                    },
 
-            prisma.withdrawRequest.update({
+                    data: {
+                        status:
+                            "REJECTED",
 
-                where: {
+                        note:
+                            reason
+                    }
+                });
 
-                    id
-
-                },
-
-                data: {
-
-                    status: "Approved"
-
-                }
-
-            }),
-
-            prisma.transaction.updateMany({
-
-                where: {
-
-                    userId: request.userId,
-
-                    type: "Withdrawal",
-
-                    status: "Pending"
-
-                },
-
-                data: {
-
-                    status: "Approved"
-
-                }
-
-            })
-
-        ]);
+                return tx
+                    .withdrawRequest
+                    .findUnique({
+                        where: {
+                            id
+                        }
+                    });
+            });
 
         return res.status(200).json({
 
             success: true,
 
             message:
-                "Withdrawal approved successfully."
+                "Withdrawal rejected and funds returned to the user's balance.",
 
+            withdrawal:
+                result
         });
 
-    }
+    } catch (error) {
 
-    catch (error) {
+        console.error(
+            "Reject withdrawal error:",
+            error
+        );
 
-        console.error(error);
-
-        return res.status(500).json({
+        return res.status(
+            error.statusCode || 500
+        ).json({
 
             success: false,
 
             message:
-                "Unable to approve withdrawal."
-
-        });
-
-    }
-
-};
-
-
-/*==================================
-        REJECT WITHDRAW
-==================================*/
-
-exports.rejectWithdraw = async (req, res) => {
-
-    try {
-
-        const { id } = req.params;
-
-        const request =
-            await prisma.withdrawRequest.findUnique({
-
-                where: {
-                    id
-                }
-
-            });
-
-        if (!request) {
-
-            return res.status(404).json({
-
-                success: false,
-
-                message:
-                    "Withdrawal request not found."
-
-            });
-
-        }
-
-        if (request.status !== "Pending") {
-
-            return res.status(400).json({
-
-                success: false,
-
-                message:
-                    "Withdrawal has already been processed."
-
-            });
-
-        }
-
-        await prisma.$transaction([
-
-            prisma.user.update({
-
-                where: {
-
-                    id: request.userId
-
-                },
-
-                data: {
-
-                    balance: {
-
-                        increment: request.amount
-
-                    },
-
-                    lockedBalance: {
-
-                        decrement: request.amount
-
-                    }
-
-                }
-
-            }),
-
-            prisma.withdrawRequest.update({
-
-                where: {
-
-                    id
-
-                },
-
-                data: {
-
-                    status: "Rejected"
-
-                }
-
-            }),
-
-            prisma.transaction.updateMany({
-
-                where: {
-
-                    userId: request.userId,
-
-                    type: "Withdrawal",
-
-                    status: "Pending"
-
-                },
-
-                data: {
-
-                    status: "Rejected"
-
-                }
-
-            })
-
-        ]);
-
-        return res.status(200).json({
-
-            success: true,
-
-            message:
-                "Withdrawal rejected successfully."
-
-        });
-
-    }
-
-    catch (error) {
-
-        console.error(error);
-
-        return res.status(500).json({
-
-            success: false,
-
-            message:
+                error.message ||
                 "Unable to reject withdrawal."
-
         });
-
     }
-
 };

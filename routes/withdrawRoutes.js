@@ -3,42 +3,39 @@
             WITHDRAW ROUTES
 ==================================================*/
 
-const express = require("express");
-
-const router = express.Router();
+const express =
+    require("express");
 
 const {
-
     createWithdraw,
-
     getWithdraws
-
-} = require("../controllers/withdrawController");
+} = require(
+    "../controllers/withdrawController"
+);
 
 const {
-
     verifyToken
+} = require(
+    "../middleware/authMiddleware"
+);
 
-} = require("../middleware/authMiddleware");
+const router =
+    express.Router();
+
 
 router.post(
-
     "/create",
-
     verifyToken,
-
     createWithdraw
-
 );
+
 
 router.get(
-
     "/",
-
     verifyToken,
-
     getWithdraws
-
 );
 
-module.exports = router;
+
+module.exports =
+    router;

@@ -3,58 +3,47 @@
         ADMIN WITHDRAW ROUTES
 ==================================================*/
 
-const express = require("express");
-
-const router = express.Router();
+const express =
+    require("express");
 
 const {
-
     getAllWithdraws,
-
     approveWithdraw,
-
     rejectWithdraw
-
-} = require("../controllers/adminWithdrawController");
+} = require(
+    "../controllers/adminWithdrawController"
+);
 
 const {
+    verifyAdminToken
+} = require(
+    "../middleware/adminAuthMiddleware"
+);
 
-    verifyToken
+const router =
+    express.Router();
 
-} = require("../middleware/authMiddleware");
-
-/*==================================
-        WITHDRAWALS
-==================================*/
 
 router.get(
-
     "/",
-
-    verifyToken,
-
+    verifyAdminToken,
     getAllWithdraws
-
 );
 
-router.post(
 
+router.post(
     "/:id/approve",
-
-    verifyToken,
-
+    verifyAdminToken,
     approveWithdraw
-
 );
+
 
 router.post(
-
     "/:id/reject",
-
-    verifyToken,
-
+    verifyAdminToken,
     rejectWithdraw
-
 );
 
-module.exports = router;
+
+module.exports =
+    router;

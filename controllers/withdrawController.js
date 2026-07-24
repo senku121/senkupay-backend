@@ -1,232 +1,471 @@
 /*==================================================
                 SENKU PAY
-        WITHDRAW CONTROLLER
+        PUSH-TO-CARD WITHDRAW CONTROLLER
 ==================================================*/
 
-const { PrismaClient } = require("@prisma/client");
+const {
+    PrismaClient
+} = require("@prisma/client");
 
-const prisma = new PrismaClient();
+const prisma =
+    new PrismaClient();
 
-/*==================================
-        CREATE WITHDRAW
-==================================*/
 
-exports.createWithdraw = async (req, res) => {
+/*==================================================
+                    HELPERS
+==================================================*/
+
+function normalizeAmount(value) {
+
+    const amount =
+        Number(value);
+
+    if (
+        !Number.isFinite(amount) ||
+        amount <= 0
+    ) {
+        return null;
+    }
+
+    return Math.round(
+        (amount + Number.EPSILON) * 100
+    ) / 100;
+}
+
+
+function normalizeClientReference(value) {
+
+    const reference =
+        String(value || "").trim();
+
+    if (!reference) {
+        return null;
+    }
+
+    if (
+        reference.length < 6 ||
+        reference.length > 100
+    ) {
+        return null;
+    }
+
+    return reference;
+}
+
+
+function displayAccount(account) {
+
+    return account.last4
+        ? `Card ending ${account.last4}`
+        : (
+            account.nickName ||
+            account.counterPartyName ||
+            "Linked payout card"
+        );
+}
+
+
+/*==================================================
+            CREATE WITHDRAW REQUEST
+==================================================*/
+
+exports.createWithdraw =
+async (req, res) => {
 
     try {
 
-        const {
+        const withdrawAmount =
+            normalizeAmount(
+                req.body?.amount
+            );
 
-            amount,
+        const linkedAccountId =
+            String(
+                req.body?.linkedAccountId || ""
+            ).trim();
 
-            method,
+        const clientReference =
+            normalizeClientReference(
+                req.body?.clientReference
+            );
 
-            account
+        if (!withdrawAmount) {
 
-        } = req.body;
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Enter a valid withdrawal amount."
+            });
+        }
 
-        const withdrawAmount = Number(amount);
+        if (!linkedAccountId) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Select a linked payout card."
+            });
+        }
 
         if (
-
-            isNaN(withdrawAmount)
-
-            ||
-
-            withdrawAmount <= 0
-
+            req.body?.clientReference &&
+            !clientReference
         ) {
 
             return res.status(400).json({
-
                 success: false,
-
-                message: "Invalid withdrawal amount."
-
+                message:
+                    "clientReference must contain 6 to 100 characters."
             });
-
         }
 
-        const user = await prisma.user.findUnique({
+        const user =
+            await prisma.user.findUnique({
 
-            where: {
+                where: {
+                    id: req.user.id
+                },
 
-                id: req.user.id
+                select: {
+                    id: true,
+                    status: true,
+                    emailVerified: true,
+                    balance: true,
+                    centryosAccountId: true,
 
-            }
+                    centryosWallets: {
 
-        });
+                        where: {
+                            currency:
+                                "USD",
+                            walletType:
+                                "SPEND"
+                        },
+
+                        select: {
+                            id: true
+                        },
+
+                        take: 1
+                    }
+                }
+            });
 
         if (!user) {
 
             return res.status(404).json({
-
                 success: false,
-
-                message: "User not found."
-
+                message:
+                    "User account not found."
             });
-
         }
 
         if (
-
-            Number(user.balance)
-
-            <
-
-            withdrawAmount
-
+            String(user.status)
+                .toUpperCase() !==
+            "ACTIVE"
         ) {
 
-            return res.status(400).json({
-
+            return res.status(403).json({
                 success: false,
-
-                message: "Insufficient balance."
-
+                message:
+                    "Your account cannot request withdrawals."
             });
-
         }
 
-        await prisma.$transaction([
+        if (!user.emailVerified) {
 
-            prisma.user.update({
+            return res.status(403).json({
+                success: false,
+                message:
+                    "Verify your email before requesting a withdrawal."
+            });
+        }
 
-                where: {
+        if (
+            !user.centryosAccountId ||
+            user.centryosWallets.length === 0
+        ) {
 
-                    id: req.user.id
+            return res.status(409).json({
+                success: false,
+                message:
+                    "Your CentryOS USD payout wallet is not connected."
+            });
+        }
 
-                },
+        const linkedAccount =
+            await prisma
+                .centryosLinkedAccount
+                .findFirst({
 
-                data: {
+                    where: {
+                        userId:
+                            user.id,
 
-                    balance: {
+                        centryosLinkedAccountId:
+                            linkedAccountId,
 
-                        decrement: withdrawAmount
+                        currency:
+                            "USD",
 
-                    },
-
-                    lockedBalance: {
-
-                        increment: withdrawAmount
-
+                        optionType:
+                            "card"
                     }
+                });
 
+        if (!linkedAccount) {
+
+            return res.status(404).json({
+                success: false,
+                message:
+                    "The selected linked card was not found. Refresh your linked accounts and try again."
+            });
+        }
+
+        const result =
+            await prisma.$transaction(
+            async (tx) => {
+
+                if (clientReference) {
+
+                    const existing =
+                        await tx
+                            .withdrawRequest
+                            .findFirst({
+
+                                where: {
+                                    userId:
+                                        user.id,
+
+                                    clientReference
+                                }
+                            });
+
+                    if (existing) {
+
+                        return {
+                            alreadyCreated:
+                                true,
+
+                            withdrawal:
+                                existing
+                        };
+                    }
                 }
 
-            }),
+                /*
+                 * Atomic balance condition prevents
+                 * simultaneous requests from spending
+                 * the same available balance.
+                 */
+                const balanceLock =
+                    await tx.user.updateMany({
 
-            prisma.withdrawRequest.create({
+                        where: {
+                            id:
+                                user.id,
 
-                data: {
+                            balance: {
+                                gte:
+                                    withdrawAmount
+                            }
+                        },
 
-                    userId: req.user.id,
+                        data: {
+                            balance: {
+                                decrement:
+                                    withdrawAmount
+                            },
 
-                    amount: withdrawAmount,
+                            lockedBalance: {
+                                increment:
+                                    withdrawAmount
+                            }
+                        }
+                    });
 
-                    method,
+                if (
+                    balanceLock.count !== 1
+                ) {
 
-                    account,
+                    const error =
+                        new Error(
+                            "Insufficient available balance."
+                        );
 
-                    status: "Pending"
+                    error.statusCode =
+                        400;
 
+                    throw error;
                 }
 
-            }),
+                const withdrawal =
+                    await tx
+                        .withdrawRequest
+                        .create({
 
-            prisma.transaction.create({
+                            data: {
+                                userId:
+                                    user.id,
 
-                data: {
+                                amount:
+                                    withdrawAmount,
 
-                    userId: req.user.id,
+                                currency:
+                                    "USD",
 
-                    type: "Withdrawal",
+                                method:
+                                    "PUSH_TO_CARD",
 
-                    amount: withdrawAmount,
+                                account:
+                                    displayAccount(
+                                        linkedAccount
+                                    ),
 
-                    status: "Pending"
+                                note:
+                                    String(
+                                        req.body?.note || ""
+                                    )
+                                        .trim()
+                                        .slice(0, 500) ||
+                                    null,
 
-                }
+                                reason:
+                                    "Senku Pay card withdrawal",
 
-            })
+                                clientReference,
 
-        ]);
+                                linkedAccountId:
+                                    linkedAccount
+                                        .centryosLinkedAccountId,
 
-        return res.status(201).json({
+                                linkedAccountType:
+                                    linkedAccount
+                                        .optionType,
+
+                                linkedAccountLast4:
+                                    linkedAccount
+                                        .last4,
+
+                                status:
+                                    "PENDING"
+                            }
+                        });
+
+                await tx.transaction.create({
+
+                    data: {
+                        userId:
+                            user.id,
+
+                        type:
+                            "WITHDRAWAL",
+
+                        amount:
+                            withdrawAmount,
+
+                        status:
+                            "PENDING",
+
+                        reference:
+                            withdrawal.id,
+
+                        note:
+                            `Push-to-card withdrawal to ${withdrawal.account}`
+                    }
+                });
+
+                return {
+                    alreadyCreated:
+                        false,
+
+                    withdrawal
+                };
+            });
+
+        return res.status(
+            result.alreadyCreated
+                ? 200
+                : 201
+        ).json({
 
             success: true,
 
-            message: "Withdrawal request submitted."
+            alreadyCreated:
+                result.alreadyCreated,
 
+            message:
+                result.alreadyCreated
+                    ? "This withdrawal request already exists."
+                    : "Withdrawal request submitted for admin review.",
+
+            withdrawal:
+                result.withdrawal
         });
 
-    }
+    } catch (error) {
 
-    catch (error) {
+        console.error(
+            "Create withdrawal error:",
+            error
+        );
 
-        console.error(error);
-
-        return res.status(500).json({
+        return res.status(
+            error.statusCode || 500
+        ).json({
 
             success: false,
 
-            message: "Unable to create withdrawal."
-
+            message:
+                error.message ||
+                "Unable to create withdrawal request."
         });
-
     }
-
 };
 
-/*==================================
-        GET USER WITHDRAWALS
-==================================*/
 
-exports.getWithdraws = async (req, res) => {
+/*==================================================
+        GET USER WITHDRAWAL REQUESTS
+==================================================*/
+
+exports.getWithdraws =
+async (req, res) => {
 
     try {
 
         const withdrawals =
+            await prisma
+                .withdrawRequest
+                .findMany({
 
-            await prisma.withdrawRequest.findMany({
+                    where: {
+                        userId:
+                            req.user.id
+                    },
 
-                where: {
-
-                    userId: req.user.id
-
-                },
-
-                orderBy: {
-
-                    createdAt: "desc"
-
-                }
-
-            });
+                    orderBy: {
+                        createdAt:
+                            "desc"
+                    }
+                });
 
         return res.status(200).json({
-
             success: true,
-
             withdrawals
-
         });
 
-    }
+    } catch (error) {
 
-    catch (error) {
-
-        console.error(error);
+        console.error(
+            "Get withdrawals error:",
+            error
+        );
 
         return res.status(500).json({
-
             success: false,
-
-            message: "Unable to load withdrawals."
-
+            message:
+                "Unable to load withdrawals."
         });
-
     }
-
 };
