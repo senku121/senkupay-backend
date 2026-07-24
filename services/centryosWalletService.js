@@ -4,6 +4,7 @@
 ==================================================*/
 
 const {
+    centryosGet,
     centryosPost
 } = require("./centryosApiService");
 
@@ -80,18 +81,19 @@ function normalizeWallet(wallet, requestedWalletType) {
 
     return {
         id,
+
         slug: wallet?.slug
             ? String(wallet.slug).trim()
             : null,
+
         currency,
+
         providerBalance:
             wallet?.balance !== undefined &&
             wallet?.balance !== null
                 ? String(wallet.balance)
                 : null,
 
-        // Store the accepted request type. The provider guide may
-        // return a different settings.walletType value.
         walletType: requestedWalletType,
 
         displayCurrency:
@@ -100,10 +102,128 @@ function normalizeWallet(wallet, requestedWalletType) {
                     .trim()
                     .toUpperCase()
                 : null,
+
         permissions,
         settings,
         providerPayload: wallet
     };
+}
+
+
+function normalizeWalletList(
+    providerResponse,
+    requestedWalletType
+) {
+
+    if (!Array.isArray(providerResponse?.wallets)) {
+        const error = new Error(
+            "CentryOS returned no wallet list."
+        );
+
+        error.statusCode = 502;
+        error.providerResponse = providerResponse;
+        throw error;
+    }
+
+    const wallets = providerResponse.wallets.map(
+        (wallet) => normalizeWallet(
+            wallet,
+            requestedWalletType
+        )
+    );
+
+    if (wallets.length === 0) {
+        const error = new Error(
+            "CentryOS returned an empty wallet list."
+        );
+
+        error.statusCode = 502;
+        error.providerResponse = providerResponse;
+        throw error;
+    }
+
+    return wallets;
+}
+
+
+function delay(milliseconds) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, milliseconds);
+    });
+}
+
+
+/*==================================================
+            GET END-USER WALLETS
+==================================================*/
+
+async function getEndUserWallets(
+    entityId,
+    requestedWalletType
+) {
+
+    const normalizedEntityId = requiredString(
+        entityId,
+        "CentryOS entity ID"
+    );
+
+    const walletType = normalizeWalletType(
+        requestedWalletType
+    );
+
+    const providerResponse = await centryosGet(
+        "ledger",
+        `/v1/ext/wallet/multi-currency/${encodeURIComponent(
+            normalizedEntityId
+        )}/${walletType.toLowerCase()}`
+    );
+
+    return {
+        walletType,
+        wallets: normalizeWalletList(
+            providerResponse,
+            walletType
+        ),
+        providerResponse
+    };
+}
+
+
+/*==================================================
+       GET WALLETS WITH SHORT RETRY WINDOW
+==================================================*/
+
+async function getEndUserWalletsWithRetry(
+    entityId,
+    requestedWalletType
+) {
+
+    const retryDelays = [
+        0,
+        350,
+        800,
+        1500
+    ];
+
+    let lastError;
+
+    for (const waitTime of retryDelays) {
+
+        if (waitTime > 0) {
+            await delay(waitTime);
+        }
+
+        try {
+            return await getEndUserWallets(
+                entityId,
+                requestedWalletType
+            );
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    throw lastError;
 }
 
 
@@ -125,7 +245,18 @@ async function createEndUserWallets(
         requestedWalletType
     );
 
-    const providerResponse = await centryosPost(
+    /*
+     * CentryOS may return only:
+     * {
+     *   "message": "Collection wallet created successfully",
+     *   "success": true
+     * }
+     *
+     * Therefore, the create response must not be treated as the
+     * authoritative wallet list. Create first, then fetch the wallets
+     * through the documented multi-currency endpoint.
+     */
+    const createResponse = await centryosPost(
         "ledger",
         "/v1/ext/wallet/create",
         {
@@ -134,42 +265,62 @@ async function createEndUserWallets(
         }
     );
 
-    if (!Array.isArray(providerResponse?.wallets)) {
+    try {
 
-        const error = new Error(
-            "CentryOS returned no wallet list."
-        );
-
-        error.statusCode = 502;
-        error.providerResponse = providerResponse;
-
-        throw error;
-    }
-
-    const wallets = providerResponse.wallets.map(
-        (wallet) => normalizeWallet(
-            wallet,
+        const fetched = await getEndUserWalletsWithRetry(
+            normalizedEntityId,
             walletType
-        )
-    );
+        );
 
-    if (wallets.length === 0) {
+        return {
+            walletType,
+            wallets: fetched.wallets,
+            providerResponse: {
+                create: createResponse,
+                fetch: fetched.providerResponse
+            }
+        };
+
+    } catch (fetchError) {
+
+        /*
+         * Some CentryOS deployments return the wallet array directly
+         * from the create call. Use it only as a safe fallback when the
+         * follow-up GET is temporarily unavailable.
+         */
+        if (
+            Array.isArray(createResponse?.wallets) &&
+            createResponse.wallets.length > 0
+        ) {
+            return {
+                walletType,
+                wallets: normalizeWalletList(
+                    createResponse,
+                    walletType
+                ),
+                providerResponse: {
+                    create: createResponse,
+                    fetchError:
+                        fetchError.providerResponse ||
+                        fetchError.message
+                }
+            };
+        }
 
         const error = new Error(
-            "CentryOS created no usable wallets."
+            "CentryOS confirmed wallet creation, but the created wallets could not be retrieved."
         );
 
         error.statusCode = 502;
-        error.providerResponse = providerResponse;
+        error.providerResponse = {
+            create: createResponse,
+            fetch:
+                fetchError.providerResponse ||
+                fetchError.message
+        };
 
         throw error;
     }
-
-    return {
-        walletType,
-        wallets,
-        providerResponse
-    };
 }
 
 
@@ -180,5 +331,6 @@ async function createEndUserWallets(
 module.exports = {
     ALLOWED_WALLET_TYPES,
     normalizeWalletType,
+    getEndUserWallets,
     createEndUserWallets
 };
