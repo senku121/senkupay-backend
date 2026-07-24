@@ -24,6 +24,8 @@ const adminTransactionRoutes = require("./routes/adminTransactionRoutes");
 const adminAgentRoutes = require("./routes/adminAgentRoutes");
 const platformWithdrawRoutes =
 require("./routes/platformWithdrawRoutes");
+const centryosAdminRoutes =
+require("./routes/centryosAdminRoutes");
 
 
 const app = express();
@@ -141,6 +143,10 @@ platformWithdrawRoutes
 app.use(
     "/api/test-mail",
     testMailRoutes
+);
+app.use(
+    "/api/admin/centryos",
+    centryosAdminRoutes
 );
 
 const PORT = process.env.PORT || 5000;
