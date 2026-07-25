@@ -17,43 +17,57 @@ new Set([
     "USD"
 ]);
 
-const PAYMENT_METHODS =
+/*
+ * These values match the payment-option names shown
+ * in the CentryOS payment-link dashboard:
+ * Card, CashApp, ApplePay and GooglePay.
+ *
+ * Pay by Bank is deliberately excluded.
+ */
+const ACCEPTED_PAYMENT_OPTIONS =
+Object.freeze([
+    "card",
+    "cashapp",
+    "applepay",
+    "googlepay"
+]);
+
+const PREFERRED_PAYMENT_METHODS =
 Object.freeze({
 
     card: {
         code:
             "CARD",
         label:
-            "Card",
-        providerOption:
-            "card"
+            "Card"
     },
 
     cashapp: {
         code:
             "CASH_APP",
         label:
-            "Cash App",
-        providerOption:
-            "cashapp"
+            "Cash App"
     },
 
     applepay: {
         code:
             "APPLE_PAY",
         label:
-            "Apple Pay",
-        providerOption:
-            "apple_pay"
+            "Apple Pay"
     },
 
     googlepay: {
         code:
             "GOOGLE_PAY",
         label:
-            "Google Pay",
-        providerOption:
-            "google_pay"
+            "Google Pay"
+    },
+
+    checkout: {
+        code:
+            "CHECKOUT",
+        label:
+            "CentryOS Checkout"
     }
 
 });
@@ -157,6 +171,12 @@ return Math.round(
 }
 
 
+/*
+ * This value is only kept for backward compatibility
+ * with older frontend requests. It does not restrict
+ * the hosted checkout. Every generated CentryOS link
+ * contains all four enabled payment options.
+ */
 function normalizePaymentMethod(value) {
 
 const method =
@@ -164,8 +184,18 @@ String(value || "")
 .trim()
 .toLowerCase();
 
+if (!method) {
+
+return {
+key:
+"checkout",
+...PREFERRED_PAYMENT_METHODS.checkout
+};
+
+}
+
 const selected =
-PAYMENT_METHODS[method];
+PREFERRED_PAYMENT_METHODS[method];
 
 if (!selected) {
 
@@ -325,7 +355,7 @@ normalizeAmount(amount);
 const normalizedCurrency =
 normalizeCurrency(currency);
 
-const normalizedMethod =
+const preferredMethod =
 normalizePaymentMethod(
 paymentMethod
 );
@@ -370,22 +400,19 @@ isOpenLink:
 false,
 
 /*
- * Product rule:
- * the customer pays exactly the entered amount.
- * CentryOS deducts its processing fee from that
- * amount before Senku Pay credits the net amount.
+ * Customer pays exactly the entered amount.
+ * CentryOS deducts the provider fee from the gross
+ * amount, and the signed webhook credits the net.
  */
 customerPays:
 false,
 
 /*
- * Restrict the hosted checkout to the exact method
- * selected on the Senku Pay page. This also keeps
- * Pay by Bank hidden.
+ * Every link shows all supported methods.
+ * Pay by Bank is not included.
  */
-acceptedPaymentOptions: [
-normalizedMethod.providerOption
-],
+acceptedPaymentOptions:
+[...ACCEPTED_PAYMENT_OPTIONS],
 
 notifyPayee:
 false,
@@ -430,10 +457,14 @@ email:
 normalizedEmail,
 
 preferredPaymentMethod:
-normalizedMethod.key,
+preferredMethod.key,
 
 preferredPaymentMethodLabel:
-normalizedMethod.label
+preferredMethod.label,
+
+enabledPaymentOptions:
+[...ACCEPTED_PAYMENT_OPTIONS]
+
 }
 
 }
@@ -453,7 +484,8 @@ providerResponse
 module.exports = {
 
 SUPPORTED_CURRENCIES,
-PAYMENT_METHODS,
+ACCEPTED_PAYMENT_OPTIONS,
+PREFERRED_PAYMENT_METHODS,
 
 normalizeAmount,
 normalizeCurrency,

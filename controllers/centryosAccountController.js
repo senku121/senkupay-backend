@@ -3,102 +3,66 @@
        CENTRYOS ACCOUNT CONTROLLER
 ==================================================*/
 
-const { PrismaClient } = require("@prisma/client");
+const {
+    getAccountMetadata
+} = require(
+    "../services/centryosAccountService"
+);
 
 const {
-    createEndUserAccount,
-    getAccountMetadata
-} = require("../services/centryosAccountService");
-
-const prisma = new PrismaClient();
+    ensureCentryosAccountForUser
+} = require(
+    "../services/centryosProvisioningService"
+);
 
 
 /*==================================================
-          CREATE/LINK MY CENTRYOS ACCOUNT
+       CREATE/LINK MY CENTRYOS ACCOUNT
 ==================================================*/
 
-exports.createMyCentryosAccount = async (req, res) => {
+exports.createMyCentryosAccount =
+async (req, res) => {
 
     try {
 
-        const user = await prisma.user.findUnique({
-            where: {
-                id: req.user.id
-            },
-            select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-                emailVerified: true,
-                status: true,
-                centryosAccountId: true,
-                centryosAccountCreatedAt: true
-            }
-        });
+        const result =
+            await ensureCentryosAccountForUser(
+                req.user.id
+            );
 
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: "User not found."
-            });
-        }
+        return res.status(
+            result.accountCreated
+                ? 201
+                : 200
+        ).json({
 
-        if (user.status !== "ACTIVE") {
-            return res.status(403).json({
-                success: false,
-                message: "Your Senku Pay account is not active."
-            });
-        }
+            success:
+                true,
 
-        if (!user.emailVerified) {
-            return res.status(403).json({
-                success: false,
-                message:
-                    "Verify your email before creating your payment account."
-            });
-        }
-
-        if (user.centryosAccountId) {
-            return res.status(200).json({
-                success: true,
-                message:
-                    "Your CentryOS account is already connected.",
-                alreadyConnected: true,
-                account: {
-                    id: user.centryosAccountId,
-                    createdAt:
-                        user.centryosAccountCreatedAt
-                }
-            });
-        }
-
-        const result = await createEndUserAccount(user);
-
-        const updatedUser = await prisma.user.update({
-            where: {
-                id: user.id
-            },
-            data: {
-                centryosAccountId: result.accountId,
-                centryosAccountCreatedAt: new Date()
-            },
-            select: {
-                centryosAccountId: true,
-                centryosAccountCreatedAt: true
-            }
-        });
-
-        return res.status(201).json({
-            success: true,
             message:
-                "CentryOS user account created and connected successfully.",
-            alreadyConnected: false,
+                result.accountCreated
+                    ? "CentryOS user account created and connected successfully."
+                    : result.accountRecovered
+                        ? "Existing CentryOS account recovered and connected successfully."
+                        : "Your CentryOS account is already connected.",
+
+            alreadyConnected:
+                !result.accountCreated,
+
+            recovered:
+                result.accountRecovered,
+
             account: {
-                id: updatedUser.centryosAccountId,
+
+                id:
+                    result.accountId,
+
                 createdAt:
-                    updatedUser.centryosAccountCreatedAt
+                    result.user
+                        .centryosAccountCreatedAt
+
             }
+
         });
 
     } catch (error) {
@@ -108,37 +72,29 @@ exports.createMyCentryosAccount = async (req, res) => {
             error
         );
 
-        const providerStatus = Number(
-            error.statusCode || 0
-        );
-
-        /*
-         * A provider-side 400 commonly means the email
-         * already exists there. We do not guess an ID or
-         * write an incorrect link into our database.
-         */
-        if (providerStatus === 400) {
-            return res.status(409).json({
-                success: false,
-                message:
-                    error.message ||
-                    "CentryOS could not create this account.",
-                providerResponse:
-                    error.providerResponse || null
-            });
-        }
+        const status =
+            Number(
+                error.statusCode || 500
+            );
 
         return res.status(
-            providerStatus >= 500 && providerStatus <= 599
-                ? 502
+            status >= 400 &&
+            status <= 599
+                ? status
                 : 500
         ).json({
-            success: false,
+
+            success:
+                false,
+
             message:
                 error.message ||
-                "Unable to connect your CentryOS account.",
+                "Unable to connect the CentryOS account.",
+
             providerResponse:
-                error.providerResponse || null
+                error.providerResponse ||
+                null
+
         });
     }
 };
@@ -148,42 +104,29 @@ exports.createMyCentryosAccount = async (req, res) => {
               GET MY ACCOUNT METADATA
 ==================================================*/
 
-exports.getMyCentryosAccount = async (req, res) => {
+exports.getMyCentryosAccount =
+async (req, res) => {
 
     try {
 
-        const user = await prisma.user.findUnique({
-            where: {
-                id: req.user.id
-            },
-            select: {
-                centryosAccountId: true
-            }
-        });
-
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: "User not found."
-            });
-        }
-
-        if (!user.centryosAccountId) {
-            return res.status(404).json({
-                success: false,
-                message:
-                    "No CentryOS account is connected yet."
-            });
-        }
+        const result =
+            await ensureCentryosAccountForUser(
+                req.user.id
+            );
 
         const providerAccount =
             await getAccountMetadata(
-                user.centryosAccountId
+                result.accountId
             );
 
         return res.status(200).json({
-            success: true,
-            account: providerAccount
+
+            success:
+                true,
+
+            account:
+                providerAccount
+
         });
 
     } catch (error) {
@@ -193,13 +136,29 @@ exports.getMyCentryosAccount = async (req, res) => {
             error
         );
 
-        return res.status(502).json({
-            success: false,
+        const status =
+            Number(
+                error.statusCode || 502
+            );
+
+        return res.status(
+            status >= 400 &&
+            status <= 599
+                ? status
+                : 502
+        ).json({
+
+            success:
+                false,
+
             message:
                 error.message ||
                 "Unable to retrieve the CentryOS account.",
+
             providerResponse:
-                error.providerResponse || null
+                error.providerResponse ||
+                null
+
         });
     }
 };

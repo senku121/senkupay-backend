@@ -5,21 +5,29 @@
 
 const {
     PrismaClient
-} = require("@prisma/client");
+} = require(
+    "@prisma/client"
+);
 
 const {
 
-normalizeAmount,
-normalizeCurrency,
-normalizePaymentMethod,
-createCentryosPaymentLink
+    normalizeAmount,
+    normalizeCurrency,
+    normalizePaymentMethod,
+    createCentryosPaymentLink
 
 } = require(
-"../services/centryosCheckoutService"
+    "../services/centryosCheckoutService"
+);
+
+const {
+    ensureCentryosCheckoutSetup
+} = require(
+    "../services/centryosProvisioningService"
 );
 
 const prisma =
-new PrismaClient();
+    new PrismaClient();
 
 
 /*==================================================
@@ -28,145 +36,148 @@ new PrismaClient();
 
 function getRequiredFrontendUrl() {
 
-const value =
-String(
-process.env.FRONTEND_URL || ""
-)
-.trim()
-.replace(/\/+$/, "");
+    const value =
+        String(
+            process.env.FRONTEND_URL ||
+            ""
+        )
+            .trim()
+            .replace(/\/+$/, "");
 
-if (!value) {
+    if (!value) {
 
-throw new Error(
-"FRONTEND_URL is missing from the environment configuration."
-);
+        const error =
+            new Error(
+                "FRONTEND_URL is missing from the environment configuration."
+            );
 
-}
+        error.statusCode = 500;
 
-return value;
+        throw error;
+    }
 
+    return value;
 }
 
 
 function buildDepositRedirectUrl(
-depositId
+    depositId
 ) {
 
-const url =
-new URL(
-"/deposit.html",
-`${getRequiredFrontendUrl()}/`
-);
+    const url =
+        new URL(
+            "/deposit.html",
+            `${getRequiredFrontendUrl()}/`
+        );
 
-url.searchParams.set(
-"payment",
-"return"
-);
+    url.searchParams.set(
+        "payment",
+        "return"
+    );
 
-url.searchParams.set(
-"depositId",
-depositId
-);
+    url.searchParams.set(
+        "depositId",
+        depositId
+    );
 
-return url.toString();
-
+    return url.toString();
 }
 
 
 function safeJson(value) {
 
-if (value === undefined) {
-return {};
+    if (value === undefined) {
+        return {};
+    }
+
+    try {
+
+        return JSON.parse(
+            JSON.stringify(value)
+        );
+
+    } catch {
+
+        return {
+            message:
+                String(value)
+        };
+    }
 }
 
-try {
 
-return JSON.parse(
-JSON.stringify(value)
-);
+function methodDatabaseValue() {
 
-} catch {
-
-return {
-message:
-String(value)
-};
-
-}
-
-}
-
-
-function methodDatabaseValue(
-paymentMethod
-) {
-
-return (
-`CENTRYOS_${paymentMethod.code}`
-);
-
+    /*
+     * The user chooses the actual payment rail on
+     * the hosted CentryOS checkout.
+     */
+    return "CENTRYOS_CHECKOUT";
 }
 
 
 function paymentLinkResponse(
-deposit
+    deposit
 ) {
 
-return {
+    return {
 
-id:
-deposit.id,
+        id:
+            deposit.id,
 
-amount:
-deposit.amount,
+        amount:
+            deposit.amount,
 
-customerPaidAmount:
-deposit.customerPaidAmount,
+        customerPaidAmount:
+            deposit.customerPaidAmount,
 
-providerFee:
-deposit.providerFee,
+        providerFee:
+            deposit.providerFee,
 
-netAmount:
-deposit.netAmount,
+        netAmount:
+            deposit.netAmount,
 
-currency:
-deposit.currency,
+        currency:
+            deposit.currency,
 
-method:
-deposit.method,
+        method:
+            deposit.method,
 
-provider:
-deposit.provider,
+        provider:
+            deposit.provider,
 
-status:
-deposit.status,
+        status:
+            deposit.status,
 
-providerStatus:
-deposit.providerStatus,
+        providerStatus:
+            deposit.providerStatus,
 
-paymentUrl:
-deposit.paymentUrl,
+        providerMethod:
+            deposit.providerMethod,
 
-paymentLinkId:
-deposit.providerPaymentLinkId,
+        paymentUrl:
+            deposit.paymentUrl,
 
-expiredAt:
-deposit.expiredAt,
+        paymentLinkId:
+            deposit
+                .providerPaymentLinkId,
 
-createdAt:
-deposit.createdAt,
+        expiredAt:
+            deposit.expiredAt,
 
-updatedAt:
-deposit.updatedAt,
+        createdAt:
+            deposit.createdAt,
 
-completedAt:
-deposit.completedAt,
+        updatedAt:
+            deposit.updatedAt,
 
-failedAt:
-deposit.failedAt
+        completedAt:
+            deposit.completedAt,
 
-};
+        failedAt:
+            deposit.failedAt
 
+    };
 }
 
 
@@ -177,465 +188,422 @@ deposit.failedAt
 exports.createMyPaymentLink =
 async (req, res) => {
 
-let deposit = null;
+    let deposit = null;
+
+    try {
+
+        const amount =
+            normalizeAmount(
+                req.body?.amount
+            );
 
-try {
+        const currency =
+            normalizeCurrency(
+                req.body?.currency ||
+                "USD"
+            );
 
-const amount =
-normalizeAmount(
-req.body?.amount
-);
+        /*
+         * Optional compatibility value. It does not
+         * restrict the hosted checkout; every link
+         * contains all four enabled payment methods.
+         */
+        const paymentMethod =
+            normalizePaymentMethod(
+                req.body?.paymentMethod
+            );
 
-const currency =
-normalizeCurrency(
-req.body?.currency || "USD"
-);
+        const itemDeliveryAddress =
+            String(
+                req.body
+                    ?.itemDeliveryAddress ||
+                ""
+            ).trim();
 
-const paymentMethod =
-normalizePaymentMethod(
-req.body?.paymentMethod
-);
+        if (
+            itemDeliveryAddress.length <
+            8
+        ) {
 
-const itemDeliveryAddress =
-String(
-req.body?.itemDeliveryAddress || ""
-).trim();
+            return res.status(400).json({
 
-if (
-itemDeliveryAddress.length < 8
-) {
+                success:
+                    false,
 
-return res.status(400).json({
+                message:
+                    "Enter the customer's real billing or delivery address."
 
-success:
-false,
+            });
+        }
+
+        const clientReference =
+            req.body?.clientReference
+                ? String(
+                    req.body
+                        .clientReference
+                ).trim()
+                : null;
+
+        if (
+            clientReference &&
+            (
+                clientReference.length <
+                    6 ||
+                clientReference.length >
+                    100
+            )
+        ) {
+
+            return res.status(400).json({
+
+                success:
+                    false,
+
+                message:
+                    "clientReference must contain 6 to 100 characters."
+
+            });
+        }
 
-message:
-"Enter the customer's real billing or delivery address."
+        if (clientReference) {
 
-});
+            const existingDeposit =
+                await prisma
+                    .deposit
+                    .findFirst({
 
-}
+                        where: {
 
-const clientReference =
-req.body?.clientReference
-? String(
-req.body.clientReference
-).trim()
-: null;
+                            userId:
+                                req.user.id,
 
-if (
-clientReference &&
-(
-clientReference.length < 6 ||
-clientReference.length > 100
-)
-) {
+                            clientReference
 
-return res.status(400).json({
+                        }
 
-success:
-false,
+                    });
 
-message:
-"clientReference must contain 6 to 100 characters."
+            if (
+                existingDeposit
+                    ?.paymentUrl
+            ) {
 
-});
+                return res
+                    .status(200)
+                    .json({
 
-}
+                        success:
+                            true,
 
-if (clientReference) {
+                        message:
+                            "This payment link was already created.",
 
-const existingDeposit =
-await prisma.deposit.findFirst({
+                        alreadyCreated:
+                            true,
 
-where: {
-userId:
-req.user.id,
-clientReference
-}
+                        deposit:
+                            paymentLinkResponse(
+                                existingDeposit
+                            )
 
-});
+                    });
+            }
 
-if (
-existingDeposit?.paymentUrl
-) {
+            if (existingDeposit) {
 
-return res.status(200).json({
+                return res
+                    .status(409)
+                    .json({
 
-success:
-true,
+                        success:
+                            false,
 
-message:
-"This payment link was already created.",
+                        message:
+                            "A payment-link request with this clientReference is already being processed."
 
-alreadyCreated:
-true,
+                    });
+            }
+        }
 
-deposit:
-paymentLinkResponse(
-existingDeposit
-)
+        /*
+         * Automatic one-time setup:
+         * 1. create/recover the CentryOS user
+         * 2. create/recover the USD COLLECTION wallet
+         * 3. best-effort create/recover the USD SPEND
+         *    wallet for future withdrawals
+         *
+         * The customer never needs to visit a
+         * CentryOS account-setup screen.
+         */
+        const setup =
+            await ensureCentryosCheckoutSetup(
+                req.user.id,
+                currency
+            );
 
-});
+        const user =
+            setup.user;
 
-}
+        deposit =
+            await prisma
+                .deposit
+                .create({
 
-if (existingDeposit) {
+                    data: {
 
-return res.status(409).json({
+                        userId:
+                            user.id,
 
-success:
-false,
+                        amount,
+                        currency,
 
-message:
-"A payment-link request with this clientReference is already being processed."
+                        method:
+                            methodDatabaseValue(),
 
-});
+                        provider:
+                            "CENTRYOS",
 
-}
+                        clientReference,
 
-}
+                        status:
+                            "PENDING",
 
-const user =
-await prisma.user.findUnique({
+                        providerStatus:
+                            "CREATING_LINK"
 
-where: {
-id:
-req.user.id
-},
+                    }
 
-select: {
+                });
 
-id:
-true,
+        const result =
+            await createCentryosPaymentLink({
 
-username:
-true,
+                depositId:
+                    deposit.id,
 
-email:
-true,
+                userId:
+                    user.id,
 
-status:
-true,
+                userEmail:
+                    user.email,
 
-emailVerified:
-true,
+                username:
+                    user.username,
 
-centryosAccountId:
-true,
+                amount,
+                currency,
 
-centryosWallets: {
+                paymentMethod:
+                    paymentMethod.key,
 
-where: {
-walletType:
-"COLLECTION",
-currency
-},
+                itemDeliveryAddress,
 
-select: {
-id:
-true,
-centryosWalletId:
-true,
-currency:
-true
-},
+                redirectTo:
+                    buildDepositRedirectUrl(
+                        deposit.id
+                    )
 
-take:
-1
+            });
 
-}
+        const savedDeposit =
+            await prisma
+                .deposit
+                .update({
 
-}
+                    where: {
+                        id:
+                            deposit.id
+                    },
 
-});
+                    data: {
 
-if (!user) {
+                        paymentId:
+                            result
+                                .paymentLinkId,
 
-return res.status(404).json({
+                        providerPaymentLinkId:
+                            result
+                                .paymentLinkId,
 
-success:
-false,
+                        paymentUrl:
+                            result.paymentUrl,
 
-message:
-"User not found."
+                        paymentToken:
+                            result.token,
 
-});
+                        paymentTokenType:
+                            result.tokenType,
 
-}
+                        expiredAt:
+                            result.expiredAt,
 
-if (
-String(user.status)
-.toUpperCase() !==
-"ACTIVE"
-) {
+                        providerStatus:
+                            result.valid
+                                ? "LINK_CREATED"
+                                : "LINK_INVALID",
 
-return res.status(403).json({
+                        providerPayload:
+                            safeJson({
 
-success:
-false,
+                                paymentLink:
+                                    result
+                                        .providerResponse,
 
-message:
-"Your Senku Pay account is not active."
+                                automaticSetup: {
 
-});
+                                    accountCreated:
+                                        setup
+                                            .accountCreated,
 
-}
+                                    accountRecovered:
+                                        setup
+                                            .accountRecovered,
 
-if (!user.emailVerified) {
+                                    collectionReady:
+                                        setup
+                                            .collectionReady,
 
-return res.status(403).json({
+                                    spendReady:
+                                        setup
+                                            .spendReady,
 
-success:
-false,
+                                    spendError:
+                                        setup
+                                            .spendError
 
-message:
-"Verify your email before creating a payment link."
+                                }
 
-});
+                            })
 
-}
+                    }
 
-if (!user.centryosAccountId) {
+                });
 
-return res.status(409).json({
+        return res
+            .status(201)
+            .json({
 
-success:
-false,
+                success:
+                    true,
 
-message:
-"Connect your CentryOS account before creating a payment link."
+                message:
+                    "CentryOS payment link created successfully.",
 
-});
+                alreadyCreated:
+                    false,
 
-}
+                automaticSetup: {
 
-if (
-user.centryosWallets.length === 0
-) {
+                    accountReady:
+                        true,
 
-return res.status(409).json({
+                    collectionWalletReady:
+                        true,
 
-success:
-false,
+                    spendWalletReady:
+                        setup.spendReady
 
-message:
-`Create your ${currency} COLLECTION wallet before creating a payment link.`
+                },
 
-});
+                deposit:
+                    paymentLinkResponse(
+                        savedDeposit
+                    )
 
-}
+            });
 
-deposit =
-await prisma.deposit.create({
+    } catch (error) {
 
-data: {
+        console.error(
+            "Create CentryOS payment link error:",
+            error
+        );
 
-userId:
-user.id,
+        if (deposit?.id) {
 
-amount,
-currency,
+            try {
 
-method:
-methodDatabaseValue(
-paymentMethod
-),
+                await prisma
+                    .deposit
+                    .update({
 
-provider:
-"CENTRYOS",
+                        where: {
+                            id:
+                                deposit.id
+                        },
 
-clientReference,
+                        data: {
 
-status:
-"PENDING",
+                            status:
+                                "FAILED",
 
-providerStatus:
-"CREATING_LINK"
+                            providerStatus:
+                                (
+                                    "CREATE_LINK_FAILED_" +
+                                    Number(
+                                        error
+                                            .statusCode ||
+                                        500
+                                    )
+                                ),
 
-}
+                            failedAt:
+                                new Date(),
 
-});
+                            providerPayload:
+                                safeJson(
+                                    error
+                                        .providerResponse ||
+                                    {
+                                        message:
+                                            error
+                                                .message
+                                    }
+                                )
 
-const result =
-await createCentryosPaymentLink({
+                        }
 
-depositId:
-deposit.id,
+                    });
 
-userId:
-user.id,
+            } catch (updateError) {
 
-userEmail:
-user.email,
+                console.error(
+                    "Unable to mark failed deposit:",
+                    updateError
+                );
+            }
+        }
 
-username:
-user.username,
+        const statusCode =
+            Number(
+                error.statusCode || 0
+            );
 
-amount,
-currency,
+        const responseStatus =
+            statusCode >= 400 &&
+            statusCode <= 499
+                ? statusCode
+                : statusCode >= 500
+                    ? 502
+                    : 500;
 
-paymentMethod:
-paymentMethod.key,
+        return res
+            .status(responseStatus)
+            .json({
 
-itemDeliveryAddress,
+                success:
+                    false,
 
-redirectTo:
-buildDepositRedirectUrl(
-deposit.id
-)
+                message:
+                    error.message ||
+                    "Unable to prepare the secure CentryOS checkout.",
 
-});
+                providerResponse:
+                    error.providerResponse ||
+                    null
 
-const savedDeposit =
-await prisma.deposit.update({
-
-where: {
-id:
-deposit.id
-},
-
-data: {
-
-paymentId:
-result.paymentLinkId,
-
-providerPaymentLinkId:
-result.paymentLinkId,
-
-paymentUrl:
-result.paymentUrl,
-
-paymentToken:
-result.token,
-
-paymentTokenType:
-result.tokenType,
-
-expiredAt:
-result.expiredAt,
-
-providerStatus:
-result.valid
-? "LINK_CREATED"
-: "LINK_INVALID",
-
-providerPayload:
-safeJson(
-result.providerResponse
-)
-
-}
-
-});
-
-return res.status(201).json({
-
-success:
-true,
-
-message:
-"CentryOS payment link created successfully.",
-
-alreadyCreated:
-false,
-
-deposit:
-paymentLinkResponse(
-savedDeposit
-)
-
-});
-
-} catch (error) {
-
-console.error(
-"Create CentryOS payment link error:",
-error
-);
-
-if (deposit?.id) {
-
-try {
-
-await prisma.deposit.update({
-
-where: {
-id:
-deposit.id
-},
-
-data: {
-
-status:
-"FAILED",
-
-providerStatus:
-(
-`CREATE_LINK_FAILED_` +
-Number(
-error.statusCode || 500
-)
-),
-
-failedAt:
-new Date(),
-
-providerPayload:
-safeJson(
-error.providerResponse || {
-message:
-error.message
-}
-)
-
-}
-
-});
-
-} catch (updateError) {
-
-console.error(
-"Unable to mark failed deposit:",
-updateError
-);
-
-}
-
-}
-
-const providerStatus =
-Number(
-error.statusCode || 0
-);
-
-const responseStatus =
-providerStatus >= 400 &&
-providerStatus <= 499
-? providerStatus
-: providerStatus >= 500
-? 502
-: 500;
-
-return res
-.status(responseStatus)
-.json({
-
-success:
-false,
-
-message:
-error.message ||
-"Unable to create the CentryOS payment link.",
-
-providerResponse:
-error.providerResponse || null
-
-});
-
-}
-
+            });
+    }
 };
 
 
@@ -646,74 +614,76 @@ error.providerResponse || null
 exports.getMyPaymentLinkDeposit =
 async (req, res) => {
 
-try {
+    try {
 
-const depositId =
-String(
-req.params.depositId || ""
-).trim();
+        const depositId =
+            String(
+                req.params.depositId ||
+                ""
+            ).trim();
 
-const deposit =
-await prisma.deposit.findFirst({
+        const deposit =
+            await prisma
+                .deposit
+                .findFirst({
 
-where: {
+                    where: {
 
-id:
-depositId,
+                        id:
+                            depositId,
 
-userId:
-req.user.id,
+                        userId:
+                            req.user.id,
 
-provider:
-"CENTRYOS"
+                        provider:
+                            "CENTRYOS"
 
-}
+                    }
 
-});
+                });
 
-if (!deposit) {
+        if (!deposit) {
 
-return res.status(404).json({
+            return res
+                .status(404)
+                .json({
 
-success:
-false,
+                    success:
+                        false,
 
-message:
-"CentryOS deposit request not found."
+                    message:
+                        "CentryOS deposit request not found."
 
-});
+                });
+        }
 
-}
+        return res.status(200).json({
 
-return res.status(200).json({
+            success:
+                true,
 
-success:
-true,
+            deposit:
+                paymentLinkResponse(
+                    deposit
+                )
 
-deposit:
-paymentLinkResponse(
-deposit
-)
+        });
 
-});
+    } catch (error) {
 
-} catch (error) {
+        console.error(
+            "Get CentryOS deposit error:",
+            error
+        );
 
-console.error(
-"Get CentryOS deposit error:",
-error
-);
+        return res.status(500).json({
 
-return res.status(500).json({
+            success:
+                false,
 
-success:
-false,
+            message:
+                "Unable to load the deposit status."
 
-message:
-"Unable to load the deposit status."
-
-});
-
-}
-
+        });
+    }
 };
