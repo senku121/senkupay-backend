@@ -148,18 +148,59 @@ app.use(
 app.use("/api/deposit", depositRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/withdraw", withdrawRoutes);
-app.use("/api/admin", adminRoutes);
+/*
+ * Mount specific admin routes before the generic
+ * /api/admin router. Otherwise a legacy route such
+ * as /withdraws inside adminRoutes can intercept
+ * /api/admin/withdraws and return the wrong data.
+ */
+app.use(
+    "/api/admin/auth",
+    adminAuthRoutes
+);
+
 app.use(
     "/api/admin/withdraws",
     adminWithdrawRoutes
 );
+
 app.use(
-"/api/admin/users",
-adminUserRoutes
+    "/api/admin/users",
+    adminUserRoutes
 );
+
 app.use(
     "/api/admin/dashboard",
     adminDashboardRoutes
+);
+
+app.use(
+    "/api/admin/platform-withdraw",
+    platformWithdrawRoutes
+);
+
+app.use(
+    "/api/admin/centryos",
+    centryosAdminRoutes
+);
+
+app.use(
+    "/api/admin",
+    adminTransactionRoutes
+);
+
+app.use(
+    "/api/admin",
+    adminAgentRoutes
+);
+
+/*
+ * Keep the generic admin router last so it cannot
+ * shadow the more specific admin endpoints above.
+ */
+app.use(
+    "/api/admin",
+    adminRoutes
 );
 
 app.get("/", (req, res) => {
@@ -168,23 +209,10 @@ app.get("/", (req, res) => {
         message: "Senku Pay Backend Running"
     });
 });
-app.use("/api/admin/auth", adminAuthRoutes);
-app.use("/api/admin", adminTransactionRoutes);
-app.use("/api/admin", adminAgentRoutes);
-app.use(
 
-"/api/admin/platform-withdraw",
-
-platformWithdrawRoutes
-
-);
 app.use(
     "/api/test-mail",
     testMailRoutes
-);
-app.use(
-    "/api/admin/centryos",
-    centryosAdminRoutes
 );
 app.use(
     "/api/centryos",
