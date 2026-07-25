@@ -166,12 +166,26 @@ async (req, res) => {
         return res.status(200).json({
 
             success: true,
+
+            /*
+             * This marker lets the frontend confirm
+             * Render is serving the current CentryOS
+             * push-to-card admin controller.
+             */
+            apiVersion:
+                "CENTRYOS_PUSH_TO_CARD_ADMIN_V2",
+
             total,
             page,
+
             pages:
-                Math.ceil(
-                    total / limit
+                Math.max(
+                    Math.ceil(
+                        total / limit
+                    ),
+                    1
                 ),
+
             withdrawals
         });
 
