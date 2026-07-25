@@ -72,6 +72,122 @@ function wasRecentlyAttempted(date) {
 }
 
 
+function normalizeSiteFeePercent(value) {
+
+    if (
+        value === undefined ||
+        value === null ||
+        String(value).trim() === ""
+    ) {
+
+        const error =
+            new Error(
+                "Enter the Senku Pay withdrawal fee percentage."
+            );
+
+        error.statusCode =
+            400;
+
+        throw error;
+    }
+
+    const percentage =
+        Number(value);
+
+    if (
+        !Number.isFinite(percentage) ||
+        percentage < 0 ||
+        percentage > 99.99
+    ) {
+
+        const error =
+            new Error(
+                "Withdrawal fee percentage must be between 0 and 99.99."
+            );
+
+        error.statusCode =
+            400;
+
+        throw error;
+    }
+
+    return Math.round(
+        (percentage + Number.EPSILON) * 100
+    ) / 100;
+}
+
+
+function calculateWithdrawalAmounts(
+    requestedAmount,
+    siteFeePercent
+) {
+
+    const requestedCents =
+        Math.round(
+            Number(requestedAmount) * 100
+        );
+
+    if (
+        !Number.isInteger(requestedCents) ||
+        requestedCents <= 0
+    ) {
+
+        const error =
+            new Error(
+                "Withdrawal request has an invalid amount."
+            );
+
+        error.statusCode =
+            400;
+
+        throw error;
+    }
+
+    /*
+     * Calculate in cents so $100 at 5% becomes:
+     * site fee = $5.00
+     * payout    = $95.00
+     */
+    const siteFeeCents =
+        Math.round(
+            requestedCents *
+            siteFeePercent /
+            100
+        );
+
+    const payoutCents =
+        requestedCents -
+        siteFeeCents;
+
+    if (payoutCents < 1) {
+
+        const error =
+            new Error(
+                "The fee leaves no payable amount. Reduce the percentage."
+            );
+
+        error.statusCode =
+            400;
+
+        throw error;
+    }
+
+    return {
+
+        requestedAmount:
+            requestedCents / 100,
+
+        siteFeePercent,
+
+        siteFeeAmount:
+            siteFeeCents / 100,
+
+        payoutAmount:
+            payoutCents / 100
+    };
+}
+
+
 /*==================================================
             GET ALL WITHDRAWALS
 ==================================================*/
@@ -173,7 +289,7 @@ async (req, res) => {
              * push-to-card admin controller.
              */
             apiVersion:
-                "CENTRYOS_PUSH_TO_CARD_ADMIN_V2",
+                "CENTRYOS_PUSH_TO_CARD_ADMIN_V3_SITE_FEE",
 
             total,
             page,
@@ -251,6 +367,17 @@ async (req, res) => {
             });
         }
 
+        const siteFeePercent =
+            normalizeSiteFeePercent(
+                req.body?.siteFeePercent
+            );
+
+        const calculatedAmounts =
+            calculateWithdrawalAmounts(
+                existing.amount,
+                siteFeePercent
+            );
+
         if (
             wasRecentlyAttempted(
                 existing.lastAttemptAt
@@ -313,6 +440,18 @@ async (req, res) => {
                         lastAttemptAt:
                             new Date(),
 
+                        siteFeePercent:
+                            calculatedAmounts
+                                .siteFeePercent,
+
+                        siteFeeAmount:
+                            calculatedAmounts
+                                .siteFeeAmount,
+
+                        payoutAmount:
+                            calculatedAmounts
+                                .payoutAmount,
+
                         lastProviderError:
                             null
                     }
@@ -342,12 +481,16 @@ async (req, res) => {
                             .linkedAccountId,
 
                     amount:
-                        existing.amount,
+                        calculatedAmounts
+                            .payoutAmount,
 
                     reason:
                         (
-                            existing.reason ||
-                            `Senku Pay withdrawal ${existing.id}`
+                            `Senku Pay withdrawal ${existing.id}. ` +
+                            `Requested ${calculatedAmounts.requestedAmount} USD, ` +
+                            `site fee ${calculatedAmounts.siteFeeAmount} USD ` +
+                            `(${calculatedAmounts.siteFeePercent}%), ` +
+                            `payout ${calculatedAmounts.payoutAmount} USD.`
                         )
                 });
 
@@ -387,9 +530,38 @@ async (req, res) => {
                         lastProviderError:
                             providerError.message,
 
+                        /*
+                         * Keep the selected fee only when the
+                         * provider outcome is uncertain. For a
+                         * confirmed client-side rejection, return
+                         * to PENDING and let the admin choose again.
+                         */
                         approvedAt:
                             uncertainOutcome
-                                ? existing.approvedAt
+                                ? new Date()
+                                : null,
+
+                        processedByAdminId:
+                            uncertainOutcome
+                                ? req.user.id
+                                : null,
+
+                        siteFeePercent:
+                            uncertainOutcome
+                                ? calculatedAmounts
+                                    .siteFeePercent
+                                : null,
+
+                        siteFeeAmount:
+                            uncertainOutcome
+                                ? calculatedAmounts
+                                    .siteFeeAmount
+                                : null,
+
+                        payoutAmount:
+                            uncertainOutcome
+                                ? calculatedAmounts
+                                    .payoutAmount
                                 : null
                     }
                 }),
@@ -490,7 +662,13 @@ async (req, res) => {
                             "PROCESSING",
 
                         note:
-                            `CentryOS push-to-card payout ${providerResult.providerStatus}`
+                            (
+                                `Push-to-card processing. ` +
+                                `Requested ${calculatedAmounts.requestedAmount} USD, ` +
+                                `Senku Pay fee ${calculatedAmounts.siteFeeAmount} USD ` +
+                                `(${calculatedAmounts.siteFeePercent}%), ` +
+                                `submitted ${calculatedAmounts.payoutAmount} USD to CentryOS.`
+                            )
                     }
                 });
 
@@ -509,7 +687,16 @@ async (req, res) => {
             success: true,
 
             message:
-                "Push-to-card payout submitted to CentryOS and is processing.",
+                (
+                    `Withdrawal approved. ` +
+                    `${calculatedAmounts.siteFeeAmount.toFixed(2)} USD ` +
+                    `Senku Pay fee was deducted and ` +
+                    `${calculatedAmounts.payoutAmount.toFixed(2)} USD ` +
+                    `was submitted to CentryOS.`
+                ),
+
+            calculation:
+                calculatedAmounts,
 
             withdrawal:
                 updated

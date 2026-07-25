@@ -106,6 +106,21 @@ function publicWithdrawal(
         providerStatus:
             withdrawal.providerStatus,
 
+        siteFeePercent:
+            withdrawal.siteFeePercent,
+
+        siteFeeAmount:
+            withdrawal.siteFeeAmount,
+
+        payoutAmount:
+            withdrawal.payoutAmount,
+
+        providerFee:
+            withdrawal.providerFee,
+
+        providerNetAmount:
+            withdrawal.providerNetAmount,
+
         note:
             withdrawal.note,
 

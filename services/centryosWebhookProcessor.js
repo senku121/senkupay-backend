@@ -1107,6 +1107,12 @@ async function processWithdrawalEvent(
             };
         }
 
+        /*
+         * Consume the full amount originally locked from
+         * the user's Senku Pay wallet. The difference
+         * between withdrawal.amount and payoutAmount is
+         * the stored Senku Pay site fee.
+         */
         const userFinalize =
             await tx.user.updateMany({
 
@@ -1250,8 +1256,12 @@ async function processWithdrawalEvent(
                 note:
                     (
                         `CentryOS push-to-card completed. ` +
-                        `Provider amount ${event.amount ?? "unknown"}, ` +
-                        `fee ${event.feeCharged ?? "unknown"}.`
+                        `Requested ${withdrawal.amount} USD, ` +
+                        `Senku Pay fee ${withdrawal.siteFeeAmount ?? 0} USD ` +
+                        `(${withdrawal.siteFeePercent ?? 0}%), ` +
+                        `submitted ${withdrawal.payoutAmount ?? withdrawal.amount} USD, ` +
+                        `provider amount ${event.amount ?? "unknown"}, ` +
+                        `provider fee ${event.feeCharged ?? "unknown"}.`
                     )
             }
         });

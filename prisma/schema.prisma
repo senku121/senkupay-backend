@@ -561,6 +561,13 @@ model WithdrawRequest {
   linkedAccountType  String?
   linkedAccountLast4 String?
 
+  // Senku Pay fee selected by the approving administrator.
+  // The original amount remains locked/deducted from the user's wallet.
+  // payoutAmount is the amount submitted to CentryOS.
+  siteFeePercent Float?
+  siteFeeAmount  Float?
+  payoutAmount   Float?
+
   // CentryOS payout submission and asynchronous settlement.
   providerTransactionId String? @unique
   providerStatus        String?
@@ -594,6 +601,7 @@ model WithdrawRequest {
   @@index([status])
   @@index([linkedAccountId])
   @@index([providerStatus])
+  @@index([siteFeePercent])
   @@index([processedByAdminId])
   @@index([createdAt])
 }
