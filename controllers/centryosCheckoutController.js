@@ -687,3 +687,29 @@ async (req, res) => {
         });
     }
 };
+
+
+
+/*==================================================
+          CHECK DEPLOYED PROVISIONING VERSION
+==================================================*/
+
+exports.getProvisioningStatus =
+async (req, res) => {
+
+    return res.status(200).json({
+
+        success:
+            true,
+
+        version:
+            "AUTO_PROVISIONING_V2",
+
+        automaticProvisioning:
+            true,
+
+        userId:
+            req.user.id
+
+    });
+};

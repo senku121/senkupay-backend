@@ -482,8 +482,8 @@ async function createOrRecoverEndUserWallets(
     try {
 
         /*
-         * Recover wallets that already exist at
-         * CentryOS but are missing in the local DB.
+         * First recover provider wallets that already
+         * exist but are missing from the local DB.
          */
         return await getEndUserWalletsWithRetry(
             entityId,
@@ -508,9 +508,9 @@ async function createOrRecoverEndUserWallets(
                 );
 
             /*
-             * A concurrent request may have created
-             * the wallets. CentryOS may answer with
-             * 400/409. Fetch and recover them.
+             * A simultaneous request may have created
+             * the wallets first. Fetch them rather than
+             * failing the customer's checkout.
              */
             if (
                 statusCode === 400 ||

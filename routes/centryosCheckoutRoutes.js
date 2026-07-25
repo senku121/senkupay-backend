@@ -13,8 +13,20 @@ const {
 
 const {
     createMyPaymentLink,
-    getMyPaymentLinkDeposit
+    getMyPaymentLinkDeposit,
+    getProvisioningStatus
 } = require("../controllers/centryosCheckoutController");
+
+
+/*==================================
+    CHECK DEPLOYED PROVISIONING
+==================================*/
+
+router.get(
+    "/provisioning-status",
+    verifyToken,
+    getProvisioningStatus
+);
 
 
 /*==================================
