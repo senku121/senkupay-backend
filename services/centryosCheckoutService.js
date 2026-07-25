@@ -20,7 +20,7 @@ new Set([
 /*
  * These values match the payment-option names shown
  * in the CentryOS payment-link dashboard:
- * Card, CashApp, ApplePay and GooglePay.
+ * Card, Cash App, Apple Pay and Google Pay.
  *
  * Pay by Bank is deliberately excluded.
  */
@@ -28,8 +28,8 @@ const ACCEPTED_PAYMENT_OPTIONS =
 Object.freeze([
     "card",
     "cashapp",
-    "applepay",
-    "googlepay"
+    "apple_pay",
+    "google_pay"
 ]);
 
 const PREFERRED_PAYMENT_METHODS =
@@ -463,7 +463,7 @@ preferredPaymentMethodLabel:
 preferredMethod.label,
 
 enabledPaymentOptions:
-[...ACCEPTED_PAYMENT_OPTIONS]
+ACCEPTED_PAYMENT_OPTIONS.join(",")
 
 }
 
