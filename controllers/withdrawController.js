@@ -7,6 +7,13 @@ const {
     PrismaClient
 } = require("@prisma/client");
 
+const {
+    ensureCentryosAccountForUser,
+    ensureCentryosWalletTypeForUser
+} = require(
+    "../services/centryosProvisioningService"
+);
+
 const prisma =
     new PrismaClient();
 
@@ -28,12 +35,15 @@ function normalizeAmount(value) {
     }
 
     return Math.round(
-        (amount + Number.EPSILON) * 100
+        (amount + Number.EPSILON) *
+        100
     ) / 100;
 }
 
 
-function normalizeClientReference(value) {
+function normalizeClientReference(
+    value
+) {
 
     const reference =
         String(value || "").trim();
@@ -65,6 +75,58 @@ function displayAccount(account) {
 }
 
 
+function publicWithdrawal(
+    withdrawal
+) {
+
+    return {
+
+        id:
+            withdrawal.id,
+
+        amount:
+            withdrawal.amount,
+
+        currency:
+            withdrawal.currency,
+
+        method:
+            withdrawal.method,
+
+        account:
+            withdrawal.account,
+
+        linkedAccountLast4:
+            withdrawal
+                .linkedAccountLast4,
+
+        status:
+            withdrawal.status,
+
+        providerStatus:
+            withdrawal.providerStatus,
+
+        note:
+            withdrawal.note,
+
+        createdAt:
+            withdrawal.createdAt,
+
+        updatedAt:
+            withdrawal.updatedAt,
+
+        completedAt:
+            withdrawal.completedAt,
+
+        failedAt:
+            withdrawal.failedAt,
+
+        rejectedAt:
+            withdrawal.rejectedAt
+    };
+}
+
+
 /*==================================================
             CREATE WITHDRAW REQUEST
 ==================================================*/
@@ -81,7 +143,8 @@ async (req, res) => {
 
         const linkedAccountId =
             String(
-                req.body?.linkedAccountId || ""
+                req.body?.linkedAccountId ||
+                ""
             ).trim();
 
         const clientReference =
@@ -119,11 +182,37 @@ async (req, res) => {
             });
         }
 
+        /*
+         * Ensure the provider account and USD SPEND
+         * wallet automatically. A customer never
+         * manually configures CentryOS.
+         */
+        const accountResult =
+            await ensureCentryosAccountForUser(
+                req.user.id
+            );
+
+        await ensureCentryosWalletTypeForUser({
+
+            userId:
+                accountResult.user.id,
+
+            accountId:
+                accountResult.accountId,
+
+            walletType:
+                "SPEND",
+
+            requiredCurrency:
+                "USD"
+        });
+
         const user =
             await prisma.user.findUnique({
 
                 where: {
-                    id: req.user.id
+                    id:
+                        accountResult.user.id
                 },
 
                 select: {
@@ -131,23 +220,7 @@ async (req, res) => {
                     status: true,
                     emailVerified: true,
                     balance: true,
-                    centryosAccountId: true,
-
-                    centryosWallets: {
-
-                        where: {
-                            currency:
-                                "USD",
-                            walletType:
-                                "SPEND"
-                        },
-
-                        select: {
-                            id: true
-                        },
-
-                        take: 1
-                    }
+                    lockedBalance: true
                 }
             });
 
@@ -160,46 +233,13 @@ async (req, res) => {
             });
         }
 
-        if (
-            String(user.status)
-                .toUpperCase() !==
-            "ACTIVE"
-        ) {
-
-            return res.status(403).json({
-                success: false,
-                message:
-                    "Your account cannot request withdrawals."
-            });
-        }
-
-        if (!user.emailVerified) {
-
-            return res.status(403).json({
-                success: false,
-                message:
-                    "Verify your email before requesting a withdrawal."
-            });
-        }
-
-        if (
-            !user.centryosAccountId ||
-            user.centryosWallets.length === 0
-        ) {
-
-            return res.status(409).json({
-                success: false,
-                message:
-                    "Your CentryOS USD payout wallet is not connected."
-            });
-        }
-
         const linkedAccount =
             await prisma
                 .centryosLinkedAccount
                 .findFirst({
 
                     where: {
+
                         userId:
                             user.id,
 
@@ -219,7 +259,7 @@ async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message:
-                    "The selected linked card was not found. Refresh your linked accounts and try again."
+                    "The selected payout card was not found. Refresh your linked cards and try again."
             });
         }
 
@@ -255,7 +295,7 @@ async (req, res) => {
                 }
 
                 /*
-                 * Atomic balance condition prevents
+                 * Atomic condition prevents two
                  * simultaneous requests from spending
                  * the same available balance.
                  */
@@ -263,6 +303,7 @@ async (req, res) => {
                     await tx.user.updateMany({
 
                         where: {
+
                             id:
                                 user.id,
 
@@ -273,6 +314,7 @@ async (req, res) => {
                         },
 
                         data: {
+
                             balance: {
                                 decrement:
                                     withdrawAmount
@@ -306,6 +348,7 @@ async (req, res) => {
                         .create({
 
                             data: {
+
                                 userId:
                                     user.id,
 
@@ -325,7 +368,8 @@ async (req, res) => {
 
                                 note:
                                     String(
-                                        req.body?.note || ""
+                                        req.body?.note ||
+                                        ""
                                     )
                                         .trim()
                                         .slice(0, 500) ||
@@ -341,12 +385,10 @@ async (req, res) => {
                                         .centryosLinkedAccountId,
 
                                 linkedAccountType:
-                                    linkedAccount
-                                        .optionType,
+                                    "card",
 
                                 linkedAccountLast4:
-                                    linkedAccount
-                                        .last4,
+                                    linkedAccount.last4,
 
                                 status:
                                     "PENDING"
@@ -356,6 +398,7 @@ async (req, res) => {
                 await tx.transaction.create({
 
                     data: {
+
                         userId:
                             user.id,
 
@@ -379,7 +422,6 @@ async (req, res) => {
                 return {
                     alreadyCreated:
                         false,
-
                     withdrawal
                 };
             });
@@ -398,10 +440,12 @@ async (req, res) => {
             message:
                 result.alreadyCreated
                     ? "This withdrawal request already exists."
-                    : "Withdrawal request submitted for admin review.",
+                    : "Push-to-card withdrawal submitted for administrator review.",
 
             withdrawal:
-                result.withdrawal
+                publicWithdrawal(
+                    result.withdrawal
+                )
         });
 
     } catch (error) {
@@ -419,7 +463,10 @@ async (req, res) => {
 
             message:
                 error.message ||
-                "Unable to create withdrawal request."
+                "Unable to create the withdrawal request.",
+
+            providerResponse:
+                error.providerResponse
         });
     }
 };
@@ -451,8 +498,13 @@ async (req, res) => {
                 });
 
         return res.status(200).json({
+
             success: true,
-            withdrawals
+
+            withdrawals:
+                withdrawals.map(
+                    publicWithdrawal
+                )
         });
 
     } catch (error) {

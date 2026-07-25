@@ -1,6 +1,6 @@
 /*==================================================
                 SENKU PAY
-      CENTRYOS LINKED ACCOUNTS CONTROLLER
+      CENTRYOS LINKED CARDS CONTROLLER
 ==================================================*/
 
 const {
@@ -13,6 +13,13 @@ const {
     "../services/centryosLinkedAccountsService"
 );
 
+const {
+    ensureCentryosAccountForUser,
+    ensureCentryosWalletTypeForUser
+} = require(
+    "../services/centryosProvisioningService"
+);
+
 const prisma =
     new PrismaClient();
 
@@ -21,7 +28,10 @@ const prisma =
                     HELPERS
 ==================================================*/
 
-function textOrNull(value, maxLength = 255) {
+function textOrNull(
+    value,
+    maxLength = 255
+) {
 
     const text =
         String(value || "").trim();
@@ -41,7 +51,9 @@ function dateOrNull(value) {
     const date =
         new Date(value);
 
-    return Number.isNaN(date.getTime())
+    return Number.isNaN(
+        date.getTime()
+    )
         ? null
         : date;
 }
@@ -59,7 +71,9 @@ function findLast4(...values) {
         }
 
         const match =
-            text.match(/([A-Za-z0-9]{4})\s*$/);
+            text.match(
+                /([A-Za-z0-9]{4})\s*$/
+            );
 
         if (match) {
             return match[1];
@@ -70,25 +84,24 @@ function findLast4(...values) {
 }
 
 
-function normalizeProviderAccount(account) {
+function normalizeProviderAccount(
+    account
+) {
 
     const summary =
         account?.account &&
-        typeof account.account === "object"
+        typeof account.account ===
+            "object"
             ? account.account
             : {};
 
-    /*
-     * The external endpoint is documented as masking
-     * sensitive numbers. We still store only a small
-     * safe summary and never persist recipientData,
-     * raw account numbers, card tokens, or the full
-     * provider response.
-     */
     return {
 
         centryosLinkedAccountId:
-            textOrNull(account?.id, 100),
+            textOrNull(
+                account?.id,
+                100
+            ),
 
         currency:
             textOrNull(
@@ -166,7 +179,7 @@ function normalizeProviderAccount(account) {
 }
 
 
-async function saveLinkedAccounts(
+async function saveLinkedCards(
     tx,
     userId,
     providerAccounts
@@ -174,18 +187,25 @@ async function saveLinkedAccounts(
 
     const saved = [];
 
-    for (const providerAccount of providerAccounts) {
+    for (
+        const providerAccount of
+        providerAccounts
+    ) {
 
         const normalized =
             normalizeProviderAccount(
                 providerAccount
             );
 
+        /*
+         * Product scope: only CARD destinations are
+         * accepted for Senku Pay withdrawals.
+         */
         if (
             !normalized
                 .centryosLinkedAccountId ||
-            !normalized.currency ||
-            !normalized.optionType
+            normalized.currency !== "USD" ||
+            normalized.optionType !== "card"
         ) {
             continue;
         }
@@ -209,11 +229,12 @@ async function saveLinkedAccounts(
 
         if (
             existing &&
-            existing.userId !== userId
+            existing.userId !==
+                userId
         ) {
 
             throw new Error(
-                "A CentryOS linked account is already assigned to another Senku Pay user."
+                "A CentryOS linked card is already assigned to another Senku Pay user."
             );
         }
 
@@ -254,7 +275,7 @@ async function saveLinkedAccounts(
 
 
 /*==================================================
-            LIST LINKED ACCOUNTS
+             LIST MY LINKED CARDS
 ==================================================*/
 
 exports.listLinkedAccounts =
@@ -269,75 +290,53 @@ async (req, res) => {
                 .trim()
                 .toUpperCase();
 
-        if (!/^[A-Z]{3}$/.test(currency)) {
+        if (currency !== "USD") {
 
             return res.status(400).json({
                 success: false,
                 message:
-                    "Currency must be a valid three-letter code."
+                    "Linked payout cards currently support USD only."
             });
         }
 
-        const user =
-            await prisma.user.findUnique({
+        const accountResult =
+            await ensureCentryosAccountForUser(
+                req.user.id
+            );
 
-                where: {
-                    id: req.user.id
-                },
+        await ensureCentryosWalletTypeForUser({
 
-                select: {
-                    id: true,
-                    email: true,
-                    emailVerified: true,
-                    centryosAccountId: true
-                }
-            });
+            userId:
+                accountResult.user.id,
 
-        if (!user) {
+            accountId:
+                accountResult.accountId,
 
-            return res.status(404).json({
-                success: false,
-                message:
-                    "User account not found."
-            });
-        }
+            walletType:
+                "SPEND",
 
-        if (!user.emailVerified) {
-
-            return res.status(403).json({
-                success: false,
-                message:
-                    "Verify your email before viewing linked payout accounts."
-            });
-        }
-
-        if (!user.centryosAccountId) {
-
-            return res.status(409).json({
-                success: false,
-                message:
-                    "Connect your CentryOS account before viewing linked payout accounts."
-            });
-        }
+            requiredCurrency:
+                "USD"
+        });
 
         const providerResult =
             await getEndUserLinkedAccounts({
 
-                currency,
+                currency:
+                    "USD",
 
                 /*
-                 * user.id is the identifier sent when
+                 * The unique identifier supplied when
                  * the CentryOS account was created.
                  */
                 externalId:
-                    user.id,
+                    accountResult.user.id,
 
                 /*
-                 * Safe fallback for CentryOS setups
-                 * that index the provider account ID.
+                 * Safe provider-account fallback.
                  */
                 fallbackExternalId:
-                    user.centryosAccountId,
+                    accountResult.accountId,
 
                 page:
                     req.query.page,
@@ -345,9 +344,12 @@ async (req, res) => {
                 limit:
                     req.query.limit,
 
+                /*
+                 * Force CARD. Browser input cannot
+                 * request bank destinations.
+                 */
                 accountType:
-                    req.query.accountType ||
-                    req.query.optionType,
+                    "card",
 
                 email:
                     req.query.email,
@@ -363,14 +365,14 @@ async (req, res) => {
             await prisma.$transaction(
             async (tx) => {
 
-                const accounts =
-                    await saveLinkedAccounts(
+                const cards =
+                    await saveLinkedCards(
                         tx,
-                        user.id,
+                        accountResult.user.id,
                         providerResult.accounts
                     );
 
-                if (accounts.length > 0) {
+                if (cards.length > 0) {
 
                     await tx
                         .centryosLinkedAccountWidgetSession
@@ -378,7 +380,7 @@ async (req, res) => {
 
                             where: {
                                 userId:
-                                    user.id,
+                                    accountResult.user.id,
                                 status:
                                     "ACTIVE"
                             },
@@ -390,7 +392,7 @@ async (req, res) => {
                         });
                 }
 
-                return accounts;
+                return cards;
             });
 
         return res.status(200).json({
@@ -398,7 +400,10 @@ async (req, res) => {
             success: true,
 
             currency:
-                providerResult.currency,
+                "USD",
+
+            accountType:
+                "card",
 
             accounts:
                 saved.map(
@@ -420,10 +425,6 @@ async (req, res) => {
                         counterPartyEmail:
                             account.counterPartyEmail,
 
-                        counterPublicPartyEmail:
-                            account
-                                .counterPublicPartyEmail,
-
                         nickName:
                             account.nickName,
 
@@ -435,9 +436,6 @@ async (req, res) => {
 
                         accountType:
                             account.accountType,
-
-                        routingType:
-                            account.routingType,
 
                         createdAt:
                             account.providerCreatedAt,
@@ -454,7 +452,7 @@ async (req, res) => {
     } catch (error) {
 
         console.error(
-            "List CentryOS linked accounts error:",
+            "List CentryOS linked cards error:",
             error
         );
 
@@ -466,7 +464,7 @@ async (req, res) => {
 
             message:
                 error.message ||
-                "Unable to retrieve linked payout accounts.",
+                "Unable to retrieve linked payout cards.",
 
             providerResponse:
                 error.providerResponse

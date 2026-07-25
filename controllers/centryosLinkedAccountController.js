@@ -13,12 +13,19 @@ const {
     "../services/centryosLinkedAccountService"
 );
 
+const {
+    ensureCentryosAccountForUser,
+    ensureCentryosWalletTypeForUser
+} = require(
+    "../services/centryosProvisioningService"
+);
+
 const prisma =
     new PrismaClient();
 
 
 /*==================================================
-            CREATE WIDGET LINK
+            CREATE CARD-LINKING WIDGET
 ==================================================*/
 
 exports.createWidget =
@@ -33,85 +40,49 @@ async (req, res) => {
                 .trim()
                 .toUpperCase();
 
-        if (!/^[A-Z]{3}$/.test(currency)) {
+        /*
+         * Senku Pay currently supports only USD
+         * push-to-card withdrawals.
+         */
+        if (currency !== "USD") {
 
             return res.status(400).json({
                 success: false,
                 message:
-                    "Currency must be a valid three-letter code."
+                    "Payout card linking currently supports USD only."
             });
         }
+
+        /*
+         * Automatic provider setup:
+         * - create/recover the CentryOS user account
+         * - create/recover the USD SPEND wallet
+         *
+         * The customer never manually creates or
+         * connects a CentryOS account.
+         */
+        const accountResult =
+            await ensureCentryosAccountForUser(
+                req.user.id
+            );
+
+        await ensureCentryosWalletTypeForUser({
+
+            userId:
+                accountResult.user.id,
+
+            accountId:
+                accountResult.accountId,
+
+            walletType:
+                "SPEND",
+
+            requiredCurrency:
+                "USD"
+        });
 
         const user =
-            await prisma.user.findUnique({
-
-                where: {
-                    id: req.user.id
-                },
-
-                select: {
-
-                    id: true,
-                    email: true,
-                    firstName: true,
-                    lastName: true,
-                    emailVerified: true,
-                    centryosAccountId: true,
-
-                    centryosWallets: {
-
-                        where: {
-                            currency,
-                            walletType:
-                                "SPEND"
-                        },
-
-                        select: {
-                            id: true
-                        },
-
-                        take: 1
-                    }
-                }
-            });
-
-        if (!user) {
-
-            return res.status(404).json({
-                success: false,
-                message:
-                    "User account not found."
-            });
-        }
-
-        if (!user.emailVerified) {
-
-            return res.status(403).json({
-                success: false,
-                message:
-                    "Verify your email before linking a payout account."
-            });
-        }
-
-        if (!user.centryosAccountId) {
-
-            return res.status(409).json({
-                success: false,
-                message:
-                    "Connect your CentryOS account before linking a payout account."
-            });
-        }
-
-        if (
-            user.centryosWallets.length === 0
-        ) {
-
-            return res.status(409).json({
-                success: false,
-                message:
-                    `No ${currency} SPEND wallet is connected for this user.`
-            });
-        }
+            accountResult.user;
 
         if (
             !String(
@@ -128,14 +99,15 @@ async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message:
-                    "First name, last name and email are required before linking an account."
+                    "First name, last name and email are required before linking a payout card."
             });
         }
 
         const widget =
             await createLinkedAccountWidget({
 
-                currency,
+                currency:
+                    "USD",
 
                 firstName:
                     user.firstName,
@@ -149,8 +121,8 @@ async (req, res) => {
 
         /*
          * The URL contains a short-lived provider
-         * token, so it is returned to the user but
-         * deliberately not stored in the database.
+         * token, so it is returned to the customer
+         * but never persisted in the database.
          */
         const session =
             await prisma.$transaction(
@@ -210,7 +182,14 @@ async (req, res) => {
             success: true,
 
             message:
-                "CentryOS linked-account widget created successfully.",
+                "Secure CentryOS payout-card widget created successfully.",
+
+            automaticSetup: {
+                accountReady:
+                    true,
+                spendWalletReady:
+                    true
+            },
 
             widget: {
 
@@ -234,7 +213,7 @@ async (req, res) => {
     } catch (error) {
 
         console.error(
-            "Create linked-account widget error:",
+            "Create linked-card widget error:",
             error
         );
 
@@ -246,7 +225,7 @@ async (req, res) => {
 
             message:
                 error.message ||
-                "Unable to create the linked-account widget.",
+                "Unable to create the secure payout-card widget.",
 
             providerResponse:
                 error.providerResponse
